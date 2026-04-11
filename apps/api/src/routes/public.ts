@@ -1,0 +1,407 @@
+import { Router } from 'express';
+import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { z } from 'zod';
+import { config } from '../config.js';
+import { ok, fail } from '../lib/response.js';
+import { loadTemplate } from '../lib/templateLoader.js';
+import { fillAcroformPdfWithResponses } from '../lib/acroformEngine.js';
+import { parseJson } from '../db/database.js';
+import {
+  getActivePublishedTemplate,
+  getTemplateBySubmissionContext,
+  getTemplateWithFields,
+  listPublishedTemplatesForPractice,
+} from '../db/templateQueries.js';
+import {
+  addSubmissionEvent,
+  autosaveSubmission,
+  autosaveSubmissionResponses,
+  completeSubmission,
+  completeSubmissionWithPdf,
+  createSubmission,
+  findPracticeById,
+  findPracticeBySlug,
+  getSubmissionById,
+} from '../db/queries.js';
+
+export const publicRouter = Router();
+
+type DynamicTemplateField = {
+  field_id: string;
+  label: string;
+  input_type: string;
+  required: boolean;
+  options: string[];
+  validation_rules: Record<string, unknown>;
+};
+
+type DynamicTemplateStep = {
+  step_id: string;
+  title: string;
+  fields: DynamicTemplateField[];
+};
+
+function toStepId(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_+/g, '_');
+}
+
+function normalizeFieldType(fieldType: string): string {
+  if (fieldType === 'signature') return 'text';
+  return fieldType;
+}
+
+function mapTemplateForPatient(template: Record<string, unknown>) {
+  const sourceFields = Array.isArray(template.fields) ? (template.fields as Array<Record<string, unknown>>) : [];
+  const stepMap = new Map<string, DynamicTemplateStep>();
+
+  for (const field of sourceFields) {
+    const sectionTitle = String(field.section_key ?? 'General');
+    const sectionKey = toStepId(sectionTitle || 'general');
+
+    if (!stepMap.has(sectionKey)) {
+      stepMap.set(sectionKey, {
+        step_id: sectionKey,
+        title: sectionTitle || 'General',
+        fields: [],
+      });
+    }
+
+    const step = stepMap.get(sectionKey)!;
+    const options = Array.isArray(field.options_json) ? field.options_json.map((item) => String(item)) : [];
+    const validation =
+      typeof field.validation_json === 'object' && field.validation_json !== null
+        ? (field.validation_json as Record<string, unknown>)
+        : {};
+
+    step.fields.push({
+      field_id: String(field.field_id ?? ''),
+      label: String(field.field_name ?? ''),
+      input_type: normalizeFieldType(String(field.field_type ?? 'text')),
+      required: Boolean(field.required),
+      options,
+      validation_rules: validation,
+    });
+  }
+
+  return {
+    form_id: String(template.template_key ?? 'patient_registration'),
+    template_id: String(template.id ?? ''),
+    version: String(template.version ?? ''),
+    title: String(template.name ?? 'Patient Registration'),
+    steps: Array.from(stepMap.values()),
+  };
+}
+
+publicRouter.get('/practices/:slug', (req, res) => {
+  const practice = findPracticeBySlug(req.params.slug);
+  if (!practice) {
+    fail(res, 'NOT_FOUND', 'Practice not found', 404);
+    return;
+  }
+
+  ok(res, {
+    id: practice.id,
+    name: practice.name,
+    slug: practice.slug,
+    logo_url: practice.logo_url,
+    settings: JSON.parse((practice.settings_json as string) || '{}'),
+  });
+});
+
+publicRouter.get('/forms/:formId/template', (req, res) => {
+  try {
+    const template = loadTemplate(req.params.formId);
+    ok(res, template);
+  } catch {
+    fail(res, 'NOT_FOUND', 'Template not found', 404);
+  }
+});
+
+publicRouter.get('/forms/active/:slug', (req, res) => {
+  const practice = findPracticeBySlug(req.params.slug);
+  if (!practice) {
+    fail(res, 'NOT_FOUND', 'Practice not found', 404);
+    return;
+  }
+
+  const requestedTemplateKey = typeof req.query.template_key === 'string' ? req.query.template_key.trim() : '';
+  if (requestedTemplateKey) {
+    const template = getActivePublishedTemplate(String(practice.id), requestedTemplateKey);
+    if (!template) {
+      fail(res, 'NOT_FOUND', `No published template found for "${requestedTemplateKey}"`, 404);
+      return;
+    }
+    ok(res, mapTemplateForPatient(template));
+    return;
+  }
+
+  const published = listPublishedTemplatesForPractice(String(practice.id));
+  ok(res, {
+    practice_slug: practice.slug,
+    templates: published.map((template) => ({
+      id: template.id,
+      template_key: template.template_key,
+      version: template.version,
+      name: template.name,
+      status: template.status,
+      acroform_ready: Boolean(template.acroform_pdf_path),
+    })),
+  });
+});
+
+const createSubmissionSchema = z.object({
+  practice_id: z.string().uuid(),
+  child_first_name: z.string().min(1),
+  child_last_name: z.string().min(1),
+  child_dob: z.string().min(1),
+  visit_type: z.enum(['new_patient', 'well_child', 'sick', 'follow_up']),
+  template_key: z.string().min(1).optional(),
+});
+
+publicRouter.post('/submissions', (req, res) => {
+  const parsed = createSubmissionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    fail(res, 'VALIDATION_ERROR', 'Invalid request body', 422, parsed.error.flatten());
+    return;
+  }
+
+  const practice = findPracticeById(parsed.data.practice_id);
+  if (!practice) {
+    fail(res, 'NOT_FOUND', 'Practice not found', 404);
+    return;
+  }
+
+  const selectedTemplateKey = parsed.data.template_key ?? 'patient_registration';
+  const publishedTemplate = getActivePublishedTemplate(parsed.data.practice_id, selectedTemplateKey);
+  if (!publishedTemplate) {
+    fail(
+      res,
+      'NO_ACTIVE_TEMPLATE',
+      `No published template found for "${selectedTemplateKey}". Staff must upload, generate, and publish this template first.`,
+      422,
+    );
+    return;
+  }
+
+  const template = publishedTemplate as Record<string, unknown>;
+  const confirmationCode = `SP-${randomBytes(3).toString('hex').toUpperCase()}`;
+
+  const initialPayload = {
+    patient: {
+      child: {
+        first_name: parsed.data.child_first_name,
+        last_name: parsed.data.child_last_name,
+        dob: parsed.data.child_dob,
+      },
+    },
+    visit_type: parsed.data.visit_type,
+    template_key: selectedTemplateKey,
+  };
+
+  const submission = createSubmission({
+    practiceId: parsed.data.practice_id,
+    visitType: parsed.data.visit_type,
+    formId: String(template.template_key),
+    templateVersion: `${String(template.template_key)}@v${String(template.version)}`,
+    templateId: String(template.id),
+    templateVersionNum: Number(template.version),
+    initialData: initialPayload,
+    confirmationCode,
+    ipAddress: req.ip,
+  });
+
+  addSubmissionEvent({
+    submissionId: submission.id,
+    practiceId: parsed.data.practice_id,
+    actorType: 'system',
+    eventType: 'submission_created',
+    payload: { visit_type: parsed.data.visit_type },
+  });
+
+  ok(res, {
+    session_id: submission.id,
+    forms_to_complete: [submission.form_id],
+    confirmation_code: submission.confirmation_code,
+    template_version: submission.template_version,
+    template_id: submission.template_id,
+  });
+});
+
+const legacyAutosaveSchema = z.object({
+  form_id: z.string().min(1),
+  step: z.number().int().min(1),
+  data: z.record(z.unknown()),
+});
+
+const responseAutosaveSchema = z.object({
+  step: z.number().int().min(1).optional(),
+  responses: z.record(z.unknown()),
+});
+
+publicRouter.patch('/submissions/:id/autosave', (req, res) => {
+  const parsed = z.union([legacyAutosaveSchema, responseAutosaveSchema]).safeParse(req.body);
+  if (!parsed.success) {
+    fail(res, 'VALIDATION_ERROR', 'Invalid autosave payload', 422, parsed.error.flatten());
+    return;
+  }
+
+  const submission = getSubmissionById(req.params.id);
+  if (!submission) {
+    fail(res, 'NOT_FOUND', 'Submission not found', 404);
+    return;
+  }
+
+  let updated = submission;
+  if ('responses' in parsed.data) {
+    const normalizedResponses: Record<string, { value: unknown; updated_at?: string }> = {};
+    for (const [fieldId, rawValue] of Object.entries(parsed.data.responses)) {
+      if (rawValue && typeof rawValue === 'object' && 'value' in (rawValue as Record<string, unknown>)) {
+        normalizedResponses[fieldId] = rawValue as { value: unknown; updated_at?: string };
+      } else {
+        normalizedResponses[fieldId] = { value: rawValue };
+      }
+    }
+    updated = autosaveSubmissionResponses({
+      submissionId: submission.id,
+      responses: normalizedResponses,
+    });
+  } else {
+    updated = autosaveSubmission({
+      submissionId: submission.id,
+      formId: parsed.data.form_id,
+      data: parsed.data.data,
+    });
+  }
+
+  addSubmissionEvent({
+    submissionId: updated.id,
+    practiceId: updated.practice_id,
+    actorType: 'parent',
+    eventType: 'autosave',
+    payload: { step: parsed.data.step ?? null },
+  });
+
+  ok(res, {
+    submission_id: updated.id,
+    status: updated.status,
+    updated_at: updated.updated_at,
+  });
+});
+
+publicRouter.get('/submissions/:id/template', (req, res) => {
+  const submission = getSubmissionById(req.params.id);
+  if (!submission) {
+    fail(res, 'NOT_FOUND', 'Submission not found', 404);
+    return;
+  }
+
+  if (submission.template_id) {
+    try {
+      const template = getTemplateWithFields(submission.template_id, submission.practice_id);
+      const mapped = mapTemplateForPatient(template);
+      const responses = parseJson<Record<string, unknown>>(submission.responses_json, {});
+      ok(res, {
+        submission_id: submission.id,
+        ...mapped,
+        responses,
+      });
+      return;
+    } catch {
+      // fall through to legacy file template for backward compatibility
+    }
+  }
+
+  try {
+    const legacyTemplate = loadTemplate('new_patient_paperwork');
+    ok(res, {
+      submission_id: submission.id,
+      ...legacyTemplate,
+      responses: {},
+    });
+  } catch {
+    fail(res, 'NOT_FOUND', 'Template not found', 404);
+  }
+});
+
+publicRouter.post('/submissions/:id/complete', (req, res) => {
+  const submission = getSubmissionById(req.params.id);
+  if (!submission) {
+    fail(res, 'NOT_FOUND', 'Submission not found', 404);
+    return;
+  }
+
+  (async () => {
+    let completedPdfPath: string | null = null;
+    const templateContext = getTemplateBySubmissionContext(submission.id);
+
+    if (templateContext?.template.acroform_pdf_path) {
+      const responseMap = parseJson<Record<string, unknown>>(submission.responses_json, {});
+      const pdfBytes = await fillAcroformPdfWithResponses({
+        acroformPdfPath: templateContext.template.acroform_pdf_path,
+        fields: templateContext.fields as Array<{
+          field_id: string;
+          field_name: string;
+          field_type: string;
+          acro_field_name: string;
+          page_number: number;
+          x: number;
+          y: number;
+          width: number;
+          height: number;
+          options_json?: string | unknown[];
+        }>,
+        responses: responseMap,
+      });
+
+      const form = parseJson<Record<string, unknown>>(submission.form_data_json, {});
+      const child = (form.patient as Record<string, unknown> | undefined)?.child as Record<string, unknown> | undefined;
+      const firstName = String(child?.first_name ?? 'patient');
+      const lastName = String(child?.last_name ?? 'unknown');
+      const safeName = `${firstName}_${lastName}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .replace(/_+/g, '_');
+      const safeTemplateKey = String(templateContext.template.template_key || 'form')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .replace(/_+/g, '_');
+
+      const submissionsDir = path.join(config.rootPath, 'apps', 'data', 'submissions', submission.id);
+      fs.mkdirSync(submissionsDir, { recursive: true });
+      completedPdfPath = path.join(submissionsDir, `${safeName}_${safeTemplateKey}_completed.pdf`);
+      fs.writeFileSync(completedPdfPath, Buffer.from(pdfBytes));
+    }
+
+    const completed = completedPdfPath
+      ? completeSubmissionWithPdf(submission.id, completedPdfPath)
+      : completeSubmission(submission.id);
+
+    addSubmissionEvent({
+      submissionId: completed.id,
+      practiceId: completed.practice_id,
+      actorType: 'parent',
+      eventType: 'submission_completed',
+      payload: {
+        completed_pdf_path: completed.completed_pdf_path,
+      },
+    });
+
+    ok(res, {
+      submission_id: completed.id,
+      status: completed.status,
+      confirmation_code: completed.confirmation_code,
+      submitted_at: completed.submitted_at,
+      completed_pdf_path: completed.completed_pdf_path,
+    });
+  })().catch((error) => {
+    fail(res, 'SUBMISSION_COMPLETE_ERROR', (error as Error).message || 'Failed to complete submission', 500);
+  });
+});

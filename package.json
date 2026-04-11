@@ -1,0 +1,26 @@
+{
+  "name": "pediform-pro",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/web",
+    "db:status": "npm run db:status -w apps/api",
+    "db:tables": "npm run db:tables -w apps/api",
+    "db:counts": "npm run db:counts -w apps/api",
+    "db:schema": "npm run db:schema -w apps/api --",
+    "db:view": "npm run db:view -w apps/api --",
+    "db:query": "npm run db:query -w apps/api --",
+    "db:migrate": "npm run db:migrate -w apps/api",
+    "db:seed": "npm run db:seed -w apps/api",
+    "db:reset": "npm run db:reset -w apps/api --"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

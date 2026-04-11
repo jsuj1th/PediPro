@@ -1,0 +1,159 @@
+{
+  "form_id": "new_patient_paperwork",
+  "version": "1.0.0",
+  "title": "New Patient Registration & Medical History",
+  "steps": [
+    {
+      "step_id": "child_information",
+      "title": "Child Information",
+      "description": "Tell us about your child.",
+      "fields": [
+        { "field_id": "child_first_name", "label": "Child First Name", "input_type": "text", "required": true, "data_path": "patient.child.first_name" },
+        { "field_id": "child_last_name", "label": "Child Last Name", "input_type": "text", "required": true, "data_path": "patient.child.last_name" },
+        { "field_id": "child_dob", "label": "Date of Birth", "input_type": "date", "required": true, "data_path": "patient.child.dob" },
+        { "field_id": "child_sex", "label": "Sex", "input_type": "select", "required": false, "options": ["Female", "Male", "Other", "Prefer not to say"], "data_path": "patient.child.sex" },
+        { "field_id": "child_race_ethnicity", "label": "Race/Ethnicity", "input_type": "text", "required": false, "data_path": "patient.child.race_ethnicity" },
+        { "field_id": "preferred_language", "label": "Preferred Language", "input_type": "text", "required": false, "data_path": "patient.child.preferred_language" }
+      ]
+    },
+    {
+      "step_id": "guardian_1",
+      "title": "Parent / Guardian 1",
+      "fields": [
+        { "field_id": "g1_full_name", "label": "Full Name", "input_type": "text", "required": true, "data_path": "guardians.primary.full_name" },
+        { "field_id": "g1_relationship", "label": "Relationship", "input_type": "text", "required": true, "data_path": "guardians.primary.relationship" },
+        { "field_id": "g1_phone", "label": "Phone", "input_type": "tel", "required": true, "data_path": "guardians.primary.phone" },
+        { "field_id": "g1_email", "label": "Email", "input_type": "email", "required": true, "data_path": "guardians.primary.email" },
+        { "field_id": "g1_address", "label": "Address", "input_type": "text", "required": true, "data_path": "guardians.primary.address" },
+        { "field_id": "g1_employer", "label": "Employer", "input_type": "text", "required": false, "data_path": "guardians.primary.employer" },
+        { "field_id": "g1_ssn_last4", "label": "SSN Last 4 (Optional)", "input_type": "text", "required": false, "data_path": "guardians.primary.ssn_last4" }
+      ]
+    },
+    {
+      "step_id": "guardian_2",
+      "title": "Parent / Guardian 2",
+      "fields": [
+        { "field_id": "g2_enabled", "label": "Add second guardian", "input_type": "checkbox", "required": false, "default_value": false, "data_path": "guardians.secondary.enabled" },
+        { "field_id": "g2_full_name", "label": "Full Name", "input_type": "text", "required": false, "data_path": "guardians.secondary.full_name" },
+        { "field_id": "g2_relationship", "label": "Relationship", "input_type": "text", "required": false, "data_path": "guardians.secondary.relationship" },
+        { "field_id": "g2_phone", "label": "Phone", "input_type": "tel", "required": false, "data_path": "guardians.secondary.phone" },
+        { "field_id": "g2_email", "label": "Email", "input_type": "email", "required": false, "data_path": "guardians.secondary.email" },
+        { "field_id": "g2_address", "label": "Address", "input_type": "text", "required": false, "data_path": "guardians.secondary.address" },
+        { "field_id": "g2_employer", "label": "Employer", "input_type": "text", "required": false, "data_path": "guardians.secondary.employer" },
+        { "field_id": "g2_ssn_last4", "label": "SSN Last 4 (Optional)", "input_type": "text", "required": false, "data_path": "guardians.secondary.ssn_last4" }
+      ]
+    },
+    {
+      "step_id": "insurance",
+      "title": "Insurance",
+      "fields": [
+        { "field_id": "primary_company", "label": "Primary Insurance Company", "input_type": "text", "required": false, "data_path": "insurance.primary.company" },
+        { "field_id": "primary_subscriber_name", "label": "Primary Subscriber Name", "input_type": "text", "required": false, "data_path": "insurance.primary.subscriber_name" },
+        { "field_id": "primary_subscriber_dob", "label": "Primary Subscriber DOB", "input_type": "date", "required": false, "data_path": "insurance.primary.subscriber_dob" },
+        { "field_id": "primary_group", "label": "Primary Group #", "input_type": "text", "required": false, "data_path": "insurance.primary.group_number" },
+        { "field_id": "primary_member", "label": "Primary Member ID", "input_type": "text", "required": false, "data_path": "insurance.primary.member_id" },
+        { "field_id": "secondary_company", "label": "Secondary Insurance Company", "input_type": "text", "required": false, "data_path": "insurance.secondary.company" },
+        { "field_id": "secondary_subscriber_name", "label": "Secondary Subscriber Name", "input_type": "text", "required": false, "data_path": "insurance.secondary.subscriber_name" },
+        { "field_id": "secondary_subscriber_dob", "label": "Secondary Subscriber DOB", "input_type": "date", "required": false, "data_path": "insurance.secondary.subscriber_dob" },
+        { "field_id": "secondary_group", "label": "Secondary Group #", "input_type": "text", "required": false, "data_path": "insurance.secondary.group_number" },
+        { "field_id": "secondary_member", "label": "Secondary Member ID", "input_type": "text", "required": false, "data_path": "insurance.secondary.member_id" }
+      ]
+    },
+    {
+      "step_id": "pharmacy",
+      "title": "Pharmacy",
+      "fields": [
+        { "field_id": "pharmacy_name", "label": "Preferred Pharmacy Name", "input_type": "text", "required": false, "data_path": "pharmacy.name" },
+        { "field_id": "pharmacy_address", "label": "Pharmacy Address", "input_type": "text", "required": false, "data_path": "pharmacy.address" },
+        { "field_id": "pharmacy_zip", "label": "Pharmacy ZIP", "input_type": "text", "required": false, "data_path": "pharmacy.zip" }
+      ]
+    },
+    {
+      "step_id": "medical_history",
+      "title": "Medical History",
+      "fields": [
+        { "field_id": "gestational_age", "label": "Gestational Age", "input_type": "text", "required": false, "data_path": "medical_history.gestational_age" },
+        { "field_id": "birth_weight", "label": "Birth Weight", "input_type": "text", "required": false, "data_path": "medical_history.birth_weight" },
+        { "field_id": "birth_complications", "label": "Birth Complications", "input_type": "textarea", "required": false, "data_path": "medical_history.birth_complications" },
+        { "field_id": "hospitalizations", "label": "Prior Hospitalizations", "input_type": "textarea", "required": false, "data_path": "medical_history.hospitalizations" },
+        { "field_id": "surgeries", "label": "Prior Surgeries", "input_type": "textarea", "required": false, "data_path": "medical_history.surgeries" }
+      ]
+    },
+    {
+      "step_id": "current_concerns",
+      "title": "Current Concerns",
+      "fields": [
+        { "field_id": "visit_reason", "label": "What brings you in today?", "input_type": "textarea", "required": false, "data_path": "concerns.visit_reason" },
+        { "field_id": "development_concerns", "label": "Any concerns about development?", "input_type": "textarea", "required": false, "data_path": "concerns.development_concerns" }
+      ]
+    },
+    {
+      "step_id": "allergies",
+      "title": "Allergies",
+      "fields": [
+        { "field_id": "no_known_allergies", "label": "No known allergies", "input_type": "checkbox", "required": false, "data_path": "allergies.no_known_allergies" },
+        { "field_id": "drug_allergies_json", "label": "Drug Allergies (JSON array)", "input_type": "json", "required": false, "data_path": "allergies.drug" },
+        { "field_id": "food_allergies_json", "label": "Food Allergies (JSON array)", "input_type": "json", "required": false, "data_path": "allergies.food" },
+        { "field_id": "env_allergies_json", "label": "Environmental Allergies (JSON array)", "input_type": "json", "required": false, "data_path": "allergies.environmental" }
+      ]
+    },
+    {
+      "step_id": "medications",
+      "title": "Current Medications",
+      "fields": [
+        { "field_id": "no_current_medications", "label": "Not on any medications", "input_type": "checkbox", "required": false, "data_path": "medications.none" },
+        { "field_id": "medications_json", "label": "Medications (JSON array)", "input_type": "json", "required": false, "data_path": "medications.items" }
+      ]
+    },
+    {
+      "step_id": "immunizations",
+      "title": "Immunization History",
+      "fields": [
+        { "field_id": "immunization_status", "label": "Immunization Status", "input_type": "select", "required": false, "options": ["Up to date", "Partial", "Unvaccinated", "Not sure"], "data_path": "immunizations.status" }
+      ]
+    },
+    {
+      "step_id": "family_history",
+      "title": "Family History",
+      "fields": [
+        { "field_id": "fh_diabetes", "label": "Diabetes", "input_type": "checkbox", "required": false, "data_path": "family_history.conditions.diabetes" },
+        { "field_id": "fh_heart_disease", "label": "Heart Disease", "input_type": "checkbox", "required": false, "data_path": "family_history.conditions.heart_disease" },
+        { "field_id": "fh_hypertension", "label": "Hypertension", "input_type": "checkbox", "required": false, "data_path": "family_history.conditions.hypertension" },
+        { "field_id": "fh_cancer", "label": "Cancer", "input_type": "checkbox", "required": false, "data_path": "family_history.conditions.cancer" },
+        { "field_id": "fh_mental_health", "label": "Mental Health Conditions", "input_type": "checkbox", "required": false, "data_path": "family_history.conditions.mental_health" },
+        { "field_id": "fh_other", "label": "Other", "input_type": "text", "required": false, "data_path": "family_history.conditions.other_notes" }
+      ]
+    },
+    {
+      "step_id": "social_history",
+      "title": "Social History",
+      "fields": [
+        { "field_id": "household_adults", "label": "# Adults in Household", "input_type": "number", "required": false, "data_path": "social_history.household_adults" },
+        { "field_id": "household_children", "label": "# Children in Household", "input_type": "number", "required": false, "data_path": "social_history.household_children" },
+        { "field_id": "smokers_in_home", "label": "Smokers in Home", "input_type": "checkbox", "required": false, "data_path": "social_history.smokers_in_home" },
+        { "field_id": "pets", "label": "Pets", "input_type": "text", "required": false, "data_path": "social_history.pets" },
+        { "field_id": "daycare_school", "label": "Daycare/School", "input_type": "text", "required": false, "data_path": "social_history.daycare_school" },
+        { "field_id": "nutrition", "label": "Nutrition", "input_type": "text", "required": false, "data_path": "social_history.nutrition" }
+      ]
+    },
+    {
+      "step_id": "provider_preference",
+      "title": "Provider Preference",
+      "fields": [
+        { "field_id": "physician_preference", "label": "Physician Preference", "input_type": "text", "required": false, "data_path": "provider_preferences.physician_preference" },
+        { "field_id": "referral_source", "label": "How did you hear about us?", "input_type": "text", "required": false, "data_path": "provider_preferences.referral_source" },
+        { "field_id": "referring_provider", "label": "Referring Provider", "input_type": "text", "required": false, "data_path": "provider_preferences.referring_provider" }
+      ]
+    },
+    {
+      "step_id": "consent_signature",
+      "title": "Consent & Signature",
+      "fields": [
+        { "field_id": "consent_agreed", "label": "I agree to treatment and consent terms", "input_type": "checkbox", "required": true, "data_path": "consent_signature.agreed" },
+        { "field_id": "consent_typed_name", "label": "Legal Name", "input_type": "text", "required": true, "data_path": "consent_signature.typed_name" },
+        { "field_id": "signature_data", "label": "Signature (type your initials or signature text)", "input_type": "text", "required": true, "data_path": "consent_signature.signature_data" },
+        { "field_id": "signed_at", "label": "Date Signed", "input_type": "date", "required": true, "data_path": "consent_signature.signed_at" }
+      ]
+    }
+  ]
+}

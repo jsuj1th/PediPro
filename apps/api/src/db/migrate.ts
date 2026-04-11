@@ -1,0 +1,312 @@
+import { db } from './database.js';
+
+export function runMigrations(): void {
+  db.exec(`
+    create table if not exists practices (
+      id text primary key,
+      name text not null,
+      slug text not null unique,
+      logo_url text,
+      settings_json text not null,
+      created_at text not null
+    );
+
+    create table if not exists staff_users (
+      id text primary key,
+      email text not null unique,
+      password_hash text not null,
+      practice_id text not null,
+      role text not null check(role in ('admin', 'staff')),
+      is_active integer not null default 1,
+      created_at text not null,
+      foreign key(practice_id) references practices(id)
+    );
+
+    create table if not exists patient_accounts (
+      id text primary key,
+      email text not null unique,
+      password_hash text not null,
+      practice_id text not null,
+      created_at text not null,
+      last_login_at text,
+      foreign key(practice_id) references practices(id)
+    );
+
+    create table if not exists patients (
+      id text primary key,
+      practice_id text not null,
+      account_id text,
+      child_first_name text not null,
+      child_last_name text not null,
+      child_dob text not null,
+      visit_type text not null,
+      preferred_language text,
+      sex text,
+      race_ethnicity text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(practice_id) references practices(id),
+      foreign key(account_id) references patient_accounts(id)
+    );
+
+    create table if not exists guardians (
+      id text primary key,
+      patient_id text not null,
+      guardian_index integer not null,
+      full_name text,
+      relationship text,
+      phone text,
+      email text,
+      address text,
+      employer text,
+      ssn_last4 text,
+      created_at text not null,
+      updated_at text not null,
+      unique(patient_id, guardian_index),
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists insurance_policies (
+      id text primary key,
+      patient_id text not null,
+      policy_order integer not null,
+      company text,
+      subscriber_name text,
+      subscriber_dob text,
+      group_number text,
+      member_id text,
+      created_at text not null,
+      updated_at text not null,
+      unique(patient_id, policy_order),
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists pharmacies (
+      id text primary key,
+      patient_id text not null unique,
+      name text,
+      address text,
+      zip text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists medical_history (
+      id text primary key,
+      patient_id text not null unique,
+      gestational_age text,
+      birth_weight text,
+      birth_complications text,
+      hospitalizations text,
+      surgeries text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists concerns (
+      id text primary key,
+      patient_id text not null unique,
+      visit_reason text,
+      development_concerns text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists allergies (
+      id text primary key,
+      patient_id text not null,
+      allergy_type text not null,
+      allergy_name text,
+      reaction text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists medications (
+      id text primary key,
+      patient_id text not null,
+      medication_name text,
+      dose text,
+      frequency text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists immunizations (
+      id text primary key,
+      patient_id text not null unique,
+      status text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists family_history (
+      id text primary key,
+      patient_id text not null,
+      condition_name text,
+      present integer not null default 0,
+      notes text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists social_history (
+      id text primary key,
+      patient_id text not null unique,
+      household_adults integer,
+      household_children integer,
+      smokers_in_home integer,
+      pets text,
+      daycare_school text,
+      nutrition text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists provider_preferences (
+      id text primary key,
+      patient_id text not null unique,
+      physician_preference text,
+      referral_source text,
+      referring_provider text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists consents_signatures (
+      id text primary key,
+      patient_id text not null unique,
+      agreed integer not null default 0,
+      typed_name text,
+      signature_data text,
+      signed_at text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(patient_id) references patients(id)
+    );
+
+    create table if not exists submissions (
+      id text primary key,
+      practice_id text not null,
+      patient_id text,
+      form_id text not null,
+      template_version text not null,
+      visit_type text not null,
+      status text not null check(status in ('in_progress', 'completed', 'exported')),
+      form_data_json text not null,
+      forms_completed_json text not null,
+      template_id text,
+      template_version_num integer,
+      responses_json text not null default '{}',
+      completed_pdf_path text,
+      confirmation_code text not null unique,
+      submitted_at text,
+      exported_at text,
+      exported_by text,
+      ip_address text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(practice_id) references practices(id),
+      foreign key(patient_id) references patients(id),
+      foreign key(exported_by) references staff_users(id)
+    );
+
+    create table if not exists submission_events (
+      id integer primary key autoincrement,
+      submission_id text not null,
+      practice_id text not null,
+      actor_type text not null,
+      actor_id text,
+      event_type text not null,
+      event_payload_json text not null,
+      created_at text not null,
+      foreign key(submission_id) references submissions(id)
+    );
+
+    create table if not exists pdf_templates (
+      id text primary key,
+      practice_id text not null,
+      template_key text not null,
+      version integer not null,
+      name text not null,
+      source_pdf_path text not null,
+      acroform_pdf_path text,
+      status text not null check(status in ('draft', 'published', 'archived')),
+      created_by text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(practice_id) references practices(id),
+      foreign key(created_by) references staff_users(id),
+      unique(practice_id, template_key, version)
+    );
+
+    create table if not exists pdf_template_fields (
+      id text primary key,
+      template_id text not null,
+      field_id text not null,
+      field_name text not null,
+      field_type text not null,
+      acro_field_name text not null,
+      required integer not null default 0,
+      page_number integer not null default 1,
+      x real not null default 0,
+      y real not null default 0,
+      width real not null default 120,
+      height real not null default 18,
+      options_json text not null default '[]',
+      validation_json text not null default '{}',
+      section_key text,
+      display_order integer not null default 0,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(template_id) references pdf_templates(id) on delete cascade,
+      unique(template_id, field_id),
+      unique(template_id, acro_field_name)
+    );
+
+    create table if not exists template_publish_events (
+      id integer primary key autoincrement,
+      template_id text not null,
+      practice_id text not null,
+      published_by text not null,
+      created_at text not null,
+      foreign key(template_id) references pdf_templates(id) on delete cascade,
+      foreign key(practice_id) references practices(id),
+      foreign key(published_by) references staff_users(id)
+    );
+
+    create index if not exists idx_submissions_practice_status on submissions(practice_id, status);
+    create index if not exists idx_patients_practice_name on patients(practice_id, child_last_name, child_first_name);
+    create index if not exists idx_pdf_templates_practice_key_status on pdf_templates(practice_id, template_key, status);
+    create index if not exists idx_pdf_template_fields_template_section_order on pdf_template_fields(template_id, section_key, display_order);
+  `);
+
+  ensureSubmissionColumns();
+}
+
+function ensureSubmissionColumns(): void {
+  const rows = db.prepare(`pragma table_info(submissions)`).all() as Array<{ name: string }>;
+  const names = new Set(rows.map((row) => row.name));
+
+  if (!names.has('template_id')) {
+    db.exec(`alter table submissions add column template_id text`);
+  }
+  if (!names.has('template_version_num')) {
+    db.exec(`alter table submissions add column template_version_num integer`);
+  }
+  if (!names.has('responses_json')) {
+    db.exec(`alter table submissions add column responses_json text not null default '{}'`);
+  }
+  if (!names.has('completed_pdf_path')) {
+    db.exec(`alter table submissions add column completed_pdf_path text`);
+  }
+}
