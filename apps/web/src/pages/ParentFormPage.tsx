@@ -163,6 +163,17 @@ export function ParentFormPage() {
             setResponses((prev) => ({ ...prev, [field.field_id]: value }));
             setFieldErrors((prev) => ({ ...prev, [field.field_id]: '' }));
           }}
+          allFields={safeCurrentStep.fields}
+          allGroups={template.groups ?? []}
+          allValues={responses as Record<string, any>}
+          onChangeAll={(updates) => {
+            setResponses((prev) => ({ ...prev, ...updates }));
+            setFieldErrors((prev) => {
+              const cleared: Record<string, string> = {};
+              for (const key of Object.keys(updates)) cleared[key] = '';
+              return { ...prev, ...cleared };
+            });
+          }}
         />
       ))}
 

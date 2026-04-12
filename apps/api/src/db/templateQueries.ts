@@ -18,6 +18,10 @@ export type TemplateFieldInput = {
   validation_json?: Record<string, unknown>;
   section_key?: string;
   display_order?: number;
+  font_size?: number;
+  group_id?: string | null;
+  group_value?: string | null;
+  parent_field_id?: string | null;
 };
 
 export type TemplateFieldRecord = {
@@ -37,6 +41,27 @@ export type TemplateFieldRecord = {
   validation_json: string;
   section_key: string | null;
   display_order: number;
+  font_size: number | null;
+  group_id: string | null;
+  group_value: string | null;
+  parent_field_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type FieldGroupInput = {
+  templateId: string;
+  group_type: 'radio' | 'checkbox' | 'boxed_input';
+  group_name: string;
+  acro_group_name: string;
+};
+
+export type FieldGroupRecord = {
+  id: string;
+  template_id: string;
+  group_type: 'radio' | 'checkbox' | 'boxed_input';
+  group_name: string;
+  acro_group_name: string;
   created_at: string;
   updated_at: string;
 };
@@ -125,11 +150,14 @@ export function getTemplateWithFields(templateId: string, practiceId: string): R
     required: Boolean(row.required),
     options_json: parseJson(row.options_json, []),
     validation_json: parseJson(row.validation_json, {}),
+    font_size: row.font_size ?? 12,
   }));
+  const groups = listFieldGroups(templateId);
 
   return {
     ...template,
     fields,
+    groups,
   };
 }
 
@@ -146,8 +174,9 @@ export function addTemplateField(input: {
     `insert into pdf_template_fields (
       id, template_id, field_id, field_name, field_type, acro_field_name, required,
       page_number, x, y, width, height, options_json, validation_json,
-      section_key, display_order, created_at, updated_at
-    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      section_key, display_order, font_size, group_id, group_value, parent_field_id,
+      created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     template.id,
@@ -165,6 +194,10 @@ export function addTemplateField(input: {
     stringifyJson(input.field.validation_json ?? {}),
     input.field.section_key ?? 'General',
     input.field.display_order ?? 0,
+    input.field.font_size ?? 12,
+    input.field.group_id ?? null,
+    input.field.group_value ?? null,
+    input.field.parent_field_id ?? null,
     now,
     now,
   );
@@ -200,6 +233,10 @@ export function updateTemplateField(input: {
       input.patch.validation_json !== undefined
         ? stringifyJson(input.patch.validation_json)
         : existing.validation_json,
+    font_size: input.patch.font_size !== undefined ? (input.patch.font_size ?? 12) : (existing.font_size ?? 12),
+    group_id: input.patch.group_id !== undefined ? (input.patch.group_id ?? null) : (existing.group_id ?? null),
+    group_value: input.patch.group_value !== undefined ? (input.patch.group_value ?? null) : (existing.group_value ?? null),
+    parent_field_id: input.patch.parent_field_id !== undefined ? (input.patch.parent_field_id ?? null) : (existing.parent_field_id ?? null),
     updated_at: nowIso(),
   };
 
@@ -207,7 +244,7 @@ export function updateTemplateField(input: {
     `update pdf_template_fields
      set field_id=?, field_name=?, field_type=?, acro_field_name=?, required=?, page_number=?,
          x=?, y=?, width=?, height=?, options_json=?, validation_json=?, section_key=?,
-         display_order=?, updated_at=?
+         display_order=?, font_size=?, group_id=?, group_value=?, parent_field_id=?, updated_at=?
      where id=? and template_id=?`,
   ).run(
     merged.field_id,
@@ -224,6 +261,10 @@ export function updateTemplateField(input: {
     merged.validation_json,
     merged.section_key,
     merged.display_order,
+    merged.font_size,
+    merged.group_id,
+    merged.group_value,
+    merged.parent_field_id,
     merged.updated_at,
     input.fieldDbId,
     template.id,
@@ -318,11 +359,18 @@ export function getActivePublishedTemplate(practiceId: string, templateKey = 'pa
     validation_json: parseJson(row.validation_json, {}),
     section_key: row.section_key ?? 'General',
     display_order: row.display_order,
+    font_size: row.font_size ?? 12,
+    group_id: row.group_id ?? null,
+    group_value: row.group_value ?? null,
+    parent_field_id: row.parent_field_id ?? null,
   }));
+
+  const groups = listFieldGroups(template.id);
 
   return {
     ...template,
     fields,
+    groups,
   };
 }
 
@@ -346,10 +394,45 @@ export function getTemplateBySubmissionContext(submissionId: string): {
     required: Boolean(row.required),
     options_json: parseJson(row.options_json, []),
     validation_json: parseJson(row.validation_json, {}),
+    font_size: row.font_size ?? 12,
   }));
 
   return {
     template,
     fields,
   };
+}
+
+// ─── Field Group CRUD ──────────────────────────────────────────────────────────
+
+export function listFieldGroups(templateId: string): FieldGroupRecord[] {
+  return db
+    .prepare('select * from field_groups where template_id = ? order by group_type asc, group_name asc')
+    .all(templateId) as FieldGroupRecord[];
+}
+
+export function createFieldGroup(input: FieldGroupInput): FieldGroupRecord {
+  const id = randomUUID();
+  const now = nowIso();
+  db.prepare(
+    `insert into field_groups (id, template_id, group_type, group_name, acro_group_name, created_at, updated_at)
+     values (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, input.templateId, input.group_type, input.group_name, input.acro_group_name, now, now);
+  return db.prepare('select * from field_groups where id = ?').get(id) as FieldGroupRecord;
+}
+
+export function updateFieldGroup(id: string, patch: { group_name?: string; acro_group_name?: string }): FieldGroupRecord {
+  const existing = db.prepare('select * from field_groups where id = ?').get(id) as FieldGroupRecord | undefined;
+  if (!existing) throw new Error('Field group not found');
+  const now = nowIso();
+  db.prepare(
+    `update field_groups set group_name=?, acro_group_name=?, updated_at=? where id=?`,
+  ).run(patch.group_name ?? existing.group_name, patch.acro_group_name ?? existing.acro_group_name, now, id);
+  return db.prepare('select * from field_groups where id = ?').get(id) as FieldGroupRecord;
+}
+
+export function deleteFieldGroup(id: string): void {
+  // Null out group_id on all fields belonging to this group
+  db.prepare('update pdf_template_fields set group_id = null where group_id = ?').run(id);
+  db.prepare('delete from field_groups where id = ?').run(id);
 }

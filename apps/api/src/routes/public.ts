@@ -35,6 +35,15 @@ type DynamicTemplateField = {
   required: boolean;
   options: string[];
   validation_rules: Record<string, unknown>;
+  font_size: number;
+  group_id: string | null;
+  group_value: string | null;
+  parent_field_id: string | null;
+  page_number: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 type DynamicTemplateStep = {
@@ -58,6 +67,7 @@ function normalizeFieldType(fieldType: string): string {
 
 function mapTemplateForPatient(template: Record<string, unknown>) {
   const sourceFields = Array.isArray(template.fields) ? (template.fields as Array<Record<string, unknown>>) : [];
+  const sourceGroups = Array.isArray(template.groups) ? template.groups : [];
   const stepMap = new Map<string, DynamicTemplateStep>();
 
   for (const field of sourceFields) {
@@ -86,6 +96,15 @@ function mapTemplateForPatient(template: Record<string, unknown>) {
       required: Boolean(field.required),
       options,
       validation_rules: validation,
+      font_size: Number(field.font_size ?? 12),
+      group_id: field.group_id ? String(field.group_id) : null,
+      group_value: field.group_value ? String(field.group_value) : null,
+      parent_field_id: field.parent_field_id ? String(field.parent_field_id) : null,
+      page_number: Number(field.page_number ?? 1),
+      x: Number(field.x ?? 0),
+      y: Number(field.y ?? 0),
+      width: Number(field.width ?? 120),
+      height: Number(field.height ?? 18),
     });
   }
 
@@ -95,6 +114,8 @@ function mapTemplateForPatient(template: Record<string, unknown>) {
     version: String(template.version ?? ''),
     title: String(template.name ?? 'Patient Registration'),
     steps: Array.from(stepMap.values()),
+    groups: sourceGroups,
+    acroform_ready: Boolean(template.acroform_pdf_path),
   };
 }
 
@@ -329,6 +350,34 @@ publicRouter.get('/submissions/:id/template', (req, res) => {
   }
 });
 
+publicRouter.get('/submissions/:id/source-pdf', (req, res) => {
+  const templateContext = getTemplateBySubmissionContext(req.params.id);
+  if (!templateContext?.template.source_pdf_path) {
+    fail(res, 'NOT_FOUND', 'Source PDF not available for this submission', 404);
+    return;
+  }
+  const pdfPath = path.resolve(templateContext.template.source_pdf_path);
+  if (!fs.existsSync(pdfPath)) {
+    fail(res, 'NOT_FOUND', 'Source PDF file not found on disk', 404);
+    return;
+  }
+  res.sendFile(pdfPath);
+});
+
+publicRouter.get('/submissions/:id/acroform-pdf', (req, res) => {
+  const templateContext = getTemplateBySubmissionContext(req.params.id);
+  if (!templateContext?.template.acroform_pdf_path) {
+    fail(res, 'NOT_FOUND', 'AcroForm PDF not available for this submission', 404);
+    return;
+  }
+  const pdfPath = path.resolve(templateContext.template.acroform_pdf_path);
+  if (!fs.existsSync(pdfPath)) {
+    fail(res, 'NOT_FOUND', 'AcroForm PDF file not found on disk', 404);
+    return;
+  }
+  res.sendFile(pdfPath);
+});
+
 publicRouter.post('/submissions/:id/complete', (req, res) => {
   const submission = getSubmissionById(req.params.id);
   if (!submission) {
@@ -342,6 +391,7 @@ publicRouter.post('/submissions/:id/complete', (req, res) => {
 
     if (templateContext?.template.acroform_pdf_path) {
       const responseMap = parseJson<Record<string, unknown>>(submission.responses_json, {});
+      const templateWithGroups = getTemplateWithFields(templateContext.template.id, templateContext.template.practice_id) as Record<string, unknown>;
       const pdfBytes = await fillAcroformPdfWithResponses({
         acroformPdfPath: templateContext.template.acroform_pdf_path,
         fields: templateContext.fields as Array<{
@@ -355,8 +405,16 @@ publicRouter.post('/submissions/:id/complete', (req, res) => {
           width: number;
           height: number;
           options_json?: string | unknown[];
+          group_id?: string | null;
+          group_value?: string | null;
         }>,
         responses: responseMap,
+        groups: (Array.isArray(templateWithGroups.groups) ? templateWithGroups.groups : []) as Array<{
+          id: string;
+          group_type: string;
+          group_name: string;
+          acro_group_name: string;
+        }>,
       });
 
       const form = parseJson<Record<string, unknown>>(submission.form_data_json, {});

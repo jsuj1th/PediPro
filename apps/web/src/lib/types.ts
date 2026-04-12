@@ -5,6 +5,22 @@ export type TemplateField = {
   required?: boolean;
   options?: string[];
   validation_rules?: Record<string, unknown>;
+  font_size?: number;
+  group_id?: string | null;
+  group_value?: string | null;
+  parent_field_id?: string | null;
+  page_number?: number;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+};
+
+export type FieldGroup = {
+  id: string;
+  group_type: 'radio' | 'checkbox' | 'boxed_input';
+  group_name: string;
+  acro_group_name: string;
 };
 
 export type TemplateStep = {
@@ -21,4 +37,6 @@ export type FormTemplate = {
   title: string;
   steps: TemplateStep[];
   responses?: Record<string, unknown>;
+  groups?: FieldGroup[];
+  acroform_ready?: boolean;
 };

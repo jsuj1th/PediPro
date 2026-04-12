@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, authHeader } from '../lib/api';
 import { PdfFieldMapper } from '../components/PdfFieldMapper';
@@ -11,7 +11,7 @@ type TemplateField = {
   id: string;
   field_id: string;
   field_name: string;
-  field_type: 'text' | 'textarea' | 'checkbox' | 'radio' | 'select' | 'date' | 'signature';
+  field_type: 'text' | 'textarea' | 'checkbox' | 'radio' | 'select' | 'date' | 'signature' | 'radio_option' | 'box_char';
   acro_field_name: string;
   required: boolean;
   page_number: number;
@@ -23,6 +23,17 @@ type TemplateField = {
   validation_json: Record<string, unknown>;
   section_key: string;
   display_order: number;
+  font_size: number;
+  group_id: string | null;
+  group_value: string | null;
+  parent_field_id: string | null;
+};
+
+type FieldGroup = {
+  id: string;
+  group_type: 'radio' | 'checkbox' | 'boxed_input';
+  group_name: string;
+  acro_group_name: string;
 };
 
 type TemplateDetail = {
@@ -34,6 +45,7 @@ type TemplateDetail = {
   source_pdf_path: string;
   acroform_pdf_path: string | null;
   fields: TemplateField[];
+  groups: FieldGroup[];
 };
 
 type EditableField = {
@@ -52,6 +64,10 @@ type EditableField = {
   validation_text: string;
   section_key: string;
   display_order: number;
+  font_size: number;
+  group_id: string;
+  group_value: string;
+  parent_field_id: string;
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
@@ -73,6 +89,10 @@ function toEditableField(field: TemplateField): EditableField {
     validation_text: JSON.stringify(field.validation_json ?? {}, null, 2),
     section_key: field.section_key ?? 'General',
     display_order: Number(field.display_order ?? 0),
+    font_size: Number(field.font_size ?? 12),
+    group_id: field.group_id ?? '',
+    group_value: field.group_value ?? '',
+    parent_field_id: field.parent_field_id ?? '',
   };
 }
 
@@ -92,6 +112,10 @@ function emptyField(): EditableField {
     validation_text: '{}',
     section_key: 'General',
     display_order: 0,
+    font_size: 12,
+    group_id: '',
+    group_value: '',
+    parent_field_id: '',
   };
 }
 
@@ -141,8 +165,7 @@ function buildFieldPayload(draft: EditableField, existingIds: Set<string>, curre
   );
   const fieldId = currentFieldId ? draft.field_id.trim() || currentFieldId : generatedFromName;
 
-  const fieldName = draft.field_name.trim();
-  if (!fieldName) throw new Error('Question label is required.');
+  const fieldName = draft.field_name.trim() || fieldId;
 
   const acroFieldName = draft.acro_field_name.trim() || fieldId;
   const validationJson = parseValidationJson(draft.validation_text);
@@ -162,6 +185,10 @@ function buildFieldPayload(draft: EditableField, existingIds: Set<string>, curre
     validation_json: validationJson,
     section_key: draft.section_key.trim() || 'General',
     display_order: Math.max(0, Math.round(ensureFiniteNumber(Number(draft.display_order), 0))),
+    font_size: Math.max(4, ensureFiniteNumber(Number(draft.font_size), 12)),
+    group_id: draft.group_id.trim() || null,
+    group_value: draft.group_value.trim() || null,
+    parent_field_id: draft.parent_field_id.trim() || null,
   };
 }
 
@@ -174,9 +201,43 @@ export function StaffTemplateEditorPage({ token }: Props) {
   const [saving, setSaving] = useState('');
   const [newField, setNewField] = useState<EditableField>(() => emptyField());
   const [editing, setEditing] = useState<Record<string, EditableField>>({});
+  const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
+
+  function toggleFieldExpanded(fieldId: string) {
+    setExpandedFields((prev) => {
+      const next = new Set(prev);
+      if (next.has(fieldId)) next.delete(fieldId);
+      else next.add(fieldId);
+      return next;
+    });
+  }
 
   const [sourcePreviewUrl, setSourcePreviewUrl] = useState<string | null>(null);
   const [acroPreviewUrl, setAcroPreviewUrl] = useState<string | null>(null);
+
+  // Groups state
+  const [newGroup, setNewGroup] = useState<{ group_type: FieldGroup['group_type']; group_name: string; acro_group_name: string }>({
+    group_type: 'radio',
+    group_name: '',
+    acro_group_name: '',
+  });
+
+  // Boxed input wizard — keep refs in sync so the stable onPositionPick callback never reads stale values
+  const [boxedStep, _setBoxedStep] = useState<'idle' | 'awaiting_first' | 'awaiting_last'>('idle');
+  const boxedStepRef = useRef<'idle' | 'awaiting_first' | 'awaiting_last'>('idle');
+  function setBoxedStep(v: 'idle' | 'awaiting_first' | 'awaiting_last') { boxedStepRef.current = v; _setBoxedStep(v); }
+
+  const [boxedGroupName, _setBoxedGroupName] = useState('');
+  const boxedGroupNameRef = useRef('');
+  function setBoxedGroupName(v: string) { boxedGroupNameRef.current = v; _setBoxedGroupName(v); }
+
+  const [boxedAcroGroupName, _setBoxedAcroGroupName] = useState('');
+  const boxedAcroGroupNameRef = useRef('');
+  function setBoxedAcroGroupName(v: string) { boxedAcroGroupNameRef.current = v; _setBoxedAcroGroupName(v); }
+
+  const [boxedFirstPos, _setBoxedFirstPos] = useState<{ x: number; y: number; width: number; height: number; page_number: number } | null>(null);
+  const boxedFirstPosRef = useRef<{ x: number; y: number; width: number; height: number; page_number: number } | null>(null);
+  function setBoxedFirstPos(v: typeof boxedFirstPosRef.current) { boxedFirstPosRef.current = v; _setBoxedFirstPos(v); }
 
   async function loadTemplate() {
     if (!token) return;
@@ -246,7 +307,12 @@ export function StaffTemplateEditorPage({ token }: Props) {
         body: JSON.stringify(payload),
       });
 
-      setNewField(emptyField());
+      setNewField((prev) => ({
+        ...emptyField(),
+        page_number: prev.page_number,
+        field_type: prev.field_type,
+        section_key: prev.section_key,
+      }));
       await loadTemplate();
     } catch (e) {
       setError((e as Error).message);
@@ -281,12 +347,30 @@ export function StaffTemplateEditorPage({ token }: Props) {
     if (!token || !template) return;
     setError('');
 
+    const targetField = template.fields.find((f) => f.id === fieldDbId);
+    const groupTypes = ['box_char', 'radio_option'];
+    const isGroupField = targetField && groupTypes.includes(targetField.field_type) && targetField.group_id;
+    const groupSiblings = isGroupField
+      ? template.fields.filter((f) => f.group_id === targetField.group_id)
+      : null;
+
     try {
       setSaving(`delete-${fieldDbId}`);
-      await api(`/api/staff/templates/${template.id}/fields/${fieldDbId}`, {
-        method: 'DELETE',
-        headers: authHeader(token),
-      });
+      if (groupSiblings && groupSiblings.length > 1) {
+        await Promise.all(
+          groupSiblings.map((f) =>
+            api(`/api/staff/templates/${template.id}/fields/${f.id}`, {
+              method: 'DELETE',
+              headers: authHeader(token),
+            }),
+          ),
+        );
+      } else {
+        await api(`/api/staff/templates/${template.id}/fields/${fieldDbId}`, {
+          method: 'DELETE',
+          headers: authHeader(token),
+        });
+      }
       await loadTemplate();
     } catch (e) {
       setError((e as Error).message);
@@ -366,6 +450,164 @@ export function StaffTemplateEditorPage({ token }: Props) {
     }
   }
 
+  async function createGroup() {
+    if (!token || !template) return;
+    if (!newGroup.group_name.trim() || !newGroup.acro_group_name.trim()) {
+      setError('Group name and acro group name are required.');
+      return;
+    }
+    setError('');
+    try {
+      setSaving('new-group');
+      await api(`/api/staff/templates/${template.id}/groups`, {
+        method: 'POST',
+        headers: authHeader(token),
+        body: JSON.stringify(newGroup),
+      });
+      setNewGroup({ group_type: 'radio', group_name: '', acro_group_name: '' });
+      await loadTemplate();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving('');
+    }
+  }
+
+  async function deleteGroup(gid: string) {
+    if (!token || !template) return;
+    setError('');
+    try {
+      setSaving(`delete-group-${gid}`);
+      await api(`/api/staff/templates/${template.id}/groups/${gid}`, {
+        method: 'DELETE',
+        headers: authHeader(token),
+      });
+      await loadTemplate();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving('');
+    }
+  }
+
+  // Use a stable ref so this function can be called from a stale onPositionPick closure
+  const templateRef = useRef(template);
+  useEffect(() => { templateRef.current = template; }, [template]);
+
+  async function createBoxedInputBoxes(lastPos: { x: number; y: number; width: number; height: number; page_number: number }) {
+    const firstPos = boxedFirstPosRef.current;
+    const groupName = boxedGroupNameRef.current;
+    const acroName = boxedAcroGroupNameRef.current;
+    const tmpl = templateRef.current;
+
+    if (!token || !tmpl || !firstPos) {
+      setError('Boxed input wizard lost state — please try again.');
+      setBoxedStep('idle');
+      return;
+    }
+    setError('');
+
+    // Find or create a boxed_input group
+    let group = (tmpl.groups ?? []).find((g) => g.acro_group_name === acroName);
+    if (!group) {
+      if (!groupName.trim() || !acroName.trim()) {
+        setError('Enter a group name and acro group name before placing boxes.');
+        return;
+      }
+      try {
+        setSaving('boxed-group');
+        group = await api<FieldGroup>(`/api/staff/templates/${tmpl.id}/groups`, {
+          method: 'POST',
+          headers: authHeader(token),
+          body: JSON.stringify({ group_type: 'boxed_input', group_name: groupName, acro_group_name: acroName }),
+        });
+      } catch (e) {
+        setError((e as Error).message);
+        setSaving('');
+        return;
+      }
+    }
+
+    const boxW = firstPos.width;
+    const boxH = firstPos.height;
+    const gap = 2;
+    const totalSpan = lastPos.x + lastPos.width - firstPos.x;
+    const count = Math.max(2, Math.round(totalSpan / (boxW + gap)));
+
+    setSaving('boxed-creating');
+    try {
+      const existingIds = new Set((tmpl.fields ?? []).map((f) => f.field_id));
+      for (let i = 0; i < count; i++) {
+        const boxX = firstPos.x + i * (boxW + gap);
+        const boxFieldId = buildUniqueFieldId(`${acroName}_${i}`, existingIds);
+        existingIds.add(boxFieldId);
+        await api(`/api/staff/templates/${tmpl.id}/fields`, {
+          method: 'POST',
+          headers: authHeader(token),
+          body: JSON.stringify({
+            field_id: boxFieldId,
+            field_name: `${groupName} [${i}]`,
+            field_type: 'box_char',
+            acro_field_name: `${acroName}_${i}`,
+            page_number: firstPos.page_number,
+            x: boxX,
+            y: firstPos.y,
+            width: boxW,
+            height: boxH,
+            group_id: group!.id,
+            group_value: String(i),
+            font_size: 12,
+          }),
+        });
+      }
+      setBoxedStep('idle');
+      setBoxedFirstPos(null);
+      setBoxedGroupName('');
+      setBoxedAcroGroupName('');
+      await loadTemplate();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving('');
+    }
+  }
+
+  // Stable ref to createBoxedInputBoxes so PdfFieldMapper's onPositionPick never goes stale
+  const createBoxedInputBoxesRef = useRef(createBoxedInputBoxes);
+  useEffect(() => { createBoxedInputBoxesRef.current = createBoxedInputBoxes; });
+
+  async function addReasonTextField(radioOptionField: TemplateField) {
+    if (!token || !template) return;
+    setError('');
+    const existingIds = new Set((template.fields ?? []).map((f) => f.field_id));
+    const reasonId = buildUniqueFieldId(`${radioOptionField.field_id}_reason`, existingIds);
+    try {
+      setSaving(`reason-${radioOptionField.id}`);
+      await api(`/api/staff/templates/${template.id}/fields`, {
+        method: 'POST',
+        headers: authHeader(token),
+        body: JSON.stringify({
+          field_id: reasonId,
+          field_name: `${radioOptionField.field_name} — Reason`,
+          field_type: 'text',
+          acro_field_name: reasonId,
+          page_number: radioOptionField.page_number,
+          x: radioOptionField.x + radioOptionField.width + 4,
+          y: radioOptionField.y,
+          width: 120,
+          height: radioOptionField.height,
+          parent_field_id: radioOptionField.id,
+          font_size: 10,
+        }),
+      });
+      await loadTemplate();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving('');
+    }
+  }
+
   if (!template) {
     return (
       <div className="container">
@@ -393,16 +635,123 @@ export function StaffTemplateEditorPage({ token }: Props) {
           <button className="secondary" onClick={() => loadPreview('source')}>
             Preview Source
           </button>
-          <button className="secondary" onClick={() => loadPreview('acroform')}>
+          <button
+            className="secondary"
+            onClick={() => loadPreview('acroform')}
+            disabled={!template.acroform_pdf_path}
+            title={!template.acroform_pdf_path ? 'Click "Generate AcroForm" first' : 'Preview AcroForm PDF'}
+          >
             Preview AcroForm
           </button>
           <button onClick={generateAcroform} disabled={saving === 'generate'}>
             {saving === 'generate' ? 'Generating...' : 'Generate AcroForm'}
           </button>
-          <button onClick={publishTemplate} disabled={saving === 'publish'}>
+          <button
+            onClick={publishTemplate}
+            disabled={saving === 'publish' || !template.acroform_pdf_path}
+            title={!template.acroform_pdf_path ? 'Generate AcroForm before publishing' : ''}
+          >
             {saving === 'publish' ? 'Publishing...' : 'Publish Version'}
           </button>
         </div>
+        {!template.acroform_pdf_path && (
+          <p style={{ fontSize: 13, color: '#888', marginTop: 6 }}>
+            No AcroForm generated yet — click <strong>Generate AcroForm</strong> after placing all fields.
+          </p>
+        )}
+
+        {/* ─── Groups Panel ──────────────────────────────────────────── */}
+        <h3 style={{ marginTop: 24 }}>Field Groups</h3>
+        <p style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
+          Create radio groups, checkbox groups, or boxed-input sequences before placing their fields.
+        </p>
+        {(template.groups ?? []).length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            {(template.groups ?? []).map((g) => (
+              <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#eef4ff', border: '1px solid #cfe0ff', borderRadius: 6, padding: '4px 10px', fontSize: 13 }}>
+                <span className="badge" style={{ textTransform: 'capitalize', fontSize: 11 }}>{g.group_type}</span>
+                <strong>{g.group_name}</strong>
+                <span style={{ color: '#888' }}>({g.acro_group_name})</span>
+                <button
+                  className="secondary"
+                  style={{ padding: '2px 8px', fontSize: 12 }}
+                  disabled={saving === `delete-group-${g.id}`}
+                  onClick={() => deleteGroup(g.id)}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div className="row" style={{ alignItems: 'end' }}>
+          <div className="field">
+            <label>Group Type</label>
+            <select value={newGroup.group_type} onChange={(e) => setNewGroup((prev) => ({ ...prev, group_type: e.target.value as FieldGroup['group_type'] }))}>
+              <option value="radio">Radio</option>
+              <option value="checkbox">Checkbox</option>
+              <option value="boxed_input">Boxed Input</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Group Name (display)</label>
+            <input value={newGroup.group_name} onChange={(e) => setNewGroup((prev) => ({ ...prev, group_name: e.target.value }))} placeholder="e.g. Race / Ethnicity" />
+          </div>
+          <div className="field">
+            <label>Acro Group Name (PDF)</label>
+            <input value={newGroup.acro_group_name} onChange={(e) => setNewGroup((prev) => ({ ...prev, acro_group_name: e.target.value }))} placeholder="e.g. race_ethnicity" />
+          </div>
+          <div className="field" style={{ display: 'flex', alignItems: 'end' }}>
+            <button onClick={createGroup} disabled={saving === 'new-group'} style={{ whiteSpace: 'nowrap' }}>
+              {saving === 'new-group' ? 'Creating...' : '+ Create Group'}
+            </button>
+          </div>
+        </div>
+
+        {/* ─── Boxed Input Wizard ─────────────────────────────────────── */}
+        <h3 style={{ marginTop: 24 }}>Boxed Input Wizard</h3>
+        <p style={{ fontSize: 13, color: '#555', marginBottom: 8 }}>
+          Auto-generates evenly spaced single-character boxes between a first and last position.
+        </p>
+        {boxedStep === 'idle' && (
+          <div className="row" style={{ alignItems: 'end' }}>
+            <div className="field">
+              <label>Group Name</label>
+              <input value={boxedGroupName} onChange={(e) => setBoxedGroupName(e.target.value)} placeholder="e.g. Date of Birth" />
+            </div>
+            <div className="field">
+              <label>Acro Group Name</label>
+              <input value={boxedAcroGroupName} onChange={(e) => setBoxedAcroGroupName(e.target.value)} placeholder="e.g. dob" />
+            </div>
+            <div className="field" style={{ display: 'flex', alignItems: 'end' }}>
+              <button
+                onClick={() => {
+                  if (!boxedGroupName.trim() || !boxedAcroGroupName.trim()) {
+                    setError('Enter group name and acro group name first.');
+                    return;
+                  }
+                  setError('');
+                  setBoxedStep('awaiting_first');
+                }}
+              >
+                Start Boxed Input
+              </button>
+            </div>
+          </div>
+        )}
+        {boxedStep === 'awaiting_first' && (
+          <div style={{ padding: '10px 14px', background: '#fff8e1', border: '1px solid #ffe082', borderRadius: 6, marginBottom: 8 }}>
+            <strong>Step 1:</strong> Drag to draw the <strong>first (leftmost) box</strong> on the PDF canvas below.
+            <button className="secondary" style={{ marginLeft: 12, padding: '2px 10px' }} onClick={() => setBoxedStep('idle')}>Cancel</button>
+          </div>
+        )}
+        {boxedStep === 'awaiting_last' && boxedFirstPos && (
+          <div style={{ padding: '10px 14px', background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 6, marginBottom: 8 }}>
+            <strong>Step 2:</strong> Drag to draw the <strong>last (rightmost) box</strong> on the PDF canvas below. First box recorded at x={Math.round(boxedFirstPos.x)}, y={Math.round(boxedFirstPos.y)}, w={Math.round(boxedFirstPos.width)}.
+            <button className="secondary" style={{ marginLeft: 12, padding: '2px 10px' }} onClick={() => { setBoxedStep('idle'); setBoxedFirstPos(null); }}>Cancel</button>
+          </div>
+        )}
+        {saving === 'boxed-creating' && <p style={{ color: '#1a6fd4' }}>Creating boxes...</p>}
 
         <h3 style={{ marginTop: 24 }}>Add Field</h3>
         <PdfFieldMapper
@@ -419,16 +768,19 @@ export function StaffTemplateEditorPage({ token }: Props) {
             height: newField.height,
           }}
           onPageChange={(pageNumber) => setNewField((prev) => ({ ...prev, page_number: pageNumber }))}
-          onPositionPick={({ x, y, width, height, page_number }) =>
-            setNewField((prev) => ({
-              ...prev,
-              x,
-              y,
-              width,
-              height,
-              page_number,
-            }))
-          }
+          onPositionPick={({ x, y, width, height, page_number }) => {
+            // Read from refs so this inline callback is never stale
+            if (boxedStepRef.current === 'awaiting_first') {
+              setBoxedFirstPos({ x, y, width, height, page_number });
+              setBoxedStep('awaiting_last');
+              return;
+            }
+            if (boxedStepRef.current === 'awaiting_last') {
+              createBoxedInputBoxesRef.current({ x, y, width, height, page_number });
+              return;
+            }
+            setNewField((prev) => ({ ...prev, x, y, width, height, page_number }));
+          }}
         />
 
         <div className="row">
@@ -460,6 +812,7 @@ export function StaffTemplateEditorPage({ token }: Props) {
               <option value="textarea">textarea</option>
               <option value="checkbox">checkbox</option>
               <option value="radio">radio</option>
+              <option value="radio_option">radio_option (placed individually)</option>
               <option value="select">select</option>
               <option value="date">date</option>
               <option value="signature">signature</option>
@@ -488,6 +841,19 @@ export function StaffTemplateEditorPage({ token }: Props) {
               onChange={(event) => setNewField((prev) => ({ ...prev, page_number: Number(event.target.value) || 1 }))}
             />
           </div>
+          <div className="field">
+            <label>Font Size</label>
+            <input
+              type="number"
+              value={newField.font_size}
+              min={4}
+              max={72}
+              onChange={(event) => setNewField((prev) => ({ ...prev, font_size: Number(event.target.value) || 12 }))}
+            />
+          </div>
+        </div>
+
+        <div className="row">
           <div className="field" style={{ display: 'flex', alignItems: 'end' }}>
             <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 0 }}>
               <input
@@ -499,6 +865,32 @@ export function StaffTemplateEditorPage({ token }: Props) {
               <span>Required</span>
             </label>
           </div>
+          {(newField.field_type === 'radio_option' || newField.field_type === 'checkbox') && (
+            <div className="field">
+              <label>Group</label>
+              <select
+                value={newField.group_id}
+                onChange={(event) => setNewField((prev) => ({ ...prev, group_id: event.target.value }))}
+              >
+                <option value="">— none —</option>
+                {(template.groups ?? [])
+                  .filter((g) => newField.field_type === 'radio_option' ? g.group_type === 'radio' : g.group_type === 'checkbox')
+                  .map((g) => (
+                    <option key={g.id} value={g.id}>{g.group_name} ({g.acro_group_name})</option>
+                  ))}
+              </select>
+            </div>
+          )}
+          {newField.field_type === 'radio_option' && (
+            <div className="field">
+              <label>Option Value</label>
+              <input
+                value={newField.group_value}
+                onChange={(event) => setNewField((prev) => ({ ...prev, group_value: event.target.value }))}
+                placeholder="e.g. Yes / No / Hispanic"
+              />
+            </div>
+          )}
         </div>
 
         <div className="row">
@@ -557,7 +949,26 @@ export function StaffTemplateEditorPage({ token }: Props) {
         {sortedFields.map((field) => {
           const draft = editing[field.id] ?? toEditableField(field);
           return (
-            <div key={field.id} className="card" style={{ marginBottom: 12, background: '#f9fbff' }}>
+            <div key={field.id} className="card" style={{ marginBottom: 8, background: '#f9fbff', padding: 0, overflow: 'hidden' }}>
+              {/* ── Collapsed header row ── */}
+              <div
+                onClick={() => toggleFieldExpanded(field.id)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+                  cursor: 'pointer', userSelect: 'none',
+                  background: expandedFields.has(field.id) ? '#e8f0fe' : '#f9fbff',
+                  borderBottom: expandedFields.has(field.id) ? '1px solid #cfe0ff' : 'none',
+                }}
+              >
+                <span style={{ fontSize: 13, color: '#555', minWidth: 16 }}>{expandedFields.has(field.id) ? '▾' : '▸'}</span>
+                <span style={{ fontWeight: 600, flex: 1, fontSize: 14 }}>{draft.field_name || draft.field_id}</span>
+                <span className="badge" style={{ fontSize: 11 }}>{draft.field_type}</span>
+                <span style={{ fontSize: 12, color: '#888' }}>{draft.section_key}</span>
+                <span style={{ fontSize: 12, color: '#aaa' }}>pg {draft.page_number}</span>
+              </div>
+
+              {expandedFields.has(field.id) && (
+              <div style={{ padding: '12px 14px' }}>
               <div className="row">
                 <div className="field">
                   <label>Field ID</label>
@@ -602,9 +1013,11 @@ export function StaffTemplateEditorPage({ token }: Props) {
                     <option value="textarea">textarea</option>
                     <option value="checkbox">checkbox</option>
                     <option value="radio">radio</option>
+                    <option value="radio_option">radio_option (placed individually)</option>
                     <option value="select">select</option>
                     <option value="date">date</option>
                     <option value="signature">signature</option>
+                    <option value="box_char">box_char</option>
                   </select>
                 </div>
               </div>
@@ -664,7 +1077,77 @@ export function StaffTemplateEditorPage({ token }: Props) {
                     <span>Required</span>
                   </label>
                 </div>
+                <div className="field">
+                  <label>Font Size</label>
+                  <input
+                    type="number"
+                    value={draft.font_size}
+                    min={4}
+                    max={72}
+                    onChange={(event) =>
+                      setEditing((prev) => ({
+                        ...prev,
+                        [field.id]: { ...draft, font_size: Number(event.target.value) || 12 },
+                      }))
+                    }
+                  />
+                </div>
               </div>
+
+              {(draft.field_type === 'radio_option' || draft.field_type === 'checkbox') && (
+                <div className="row">
+                  <div className="field">
+                    <label>Group</label>
+                    <select
+                      value={draft.group_id}
+                      onChange={(event) =>
+                        setEditing((prev) => ({ ...prev, [field.id]: { ...draft, group_id: event.target.value } }))
+                      }
+                    >
+                      <option value="">— none —</option>
+                      {(template.groups ?? [])
+                        .filter((g) => draft.field_type === 'radio_option' ? g.group_type === 'radio' : g.group_type === 'checkbox')
+                        .map((g) => (
+                          <option key={g.id} value={g.id}>{g.group_name} ({g.acro_group_name})</option>
+                        ))}
+                    </select>
+                  </div>
+                  {draft.field_type === 'radio_option' && (
+                    <div className="field">
+                      <label>Option Value</label>
+                      <input
+                        value={draft.group_value}
+                        onChange={(event) =>
+                          setEditing((prev) => ({ ...prev, [field.id]: { ...draft, group_value: event.target.value } }))
+                        }
+                        placeholder="e.g. Yes / No / Hispanic"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {draft.field_type === 'radio_option' && !field.parent_field_id && (
+                <div style={{ marginBottom: 8 }}>
+                  <button
+                    className="secondary"
+                    style={{ fontSize: 12, padding: '4px 10px' }}
+                    disabled={saving === `reason-${field.id}`}
+                    onClick={() => addReasonTextField(field)}
+                  >
+                    {saving === `reason-${field.id}` ? 'Adding...' : '+ Add Reason Text Field'}
+                  </button>
+                  {(template.fields ?? []).some((f) => f.parent_field_id === field.id) && (
+                    <span style={{ marginLeft: 8, fontSize: 12, color: '#1a6fd4' }}>✓ Has reason text field</span>
+                  )}
+                </div>
+              )}
+
+              {field.parent_field_id && (
+                <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
+                  Child of field: {(template.fields ?? []).find((f) => f.id === field.parent_field_id)?.field_name ?? field.parent_field_id}
+                </div>
+              )}
 
               <div className="row">
                 <div className="field">
@@ -757,6 +1240,8 @@ export function StaffTemplateEditorPage({ token }: Props) {
                   {saving === `delete-${field.id}` ? 'Deleting...' : 'Delete Field'}
                 </button>
               </div>
+              </div>
+              )}
             </div>
           );
         })}

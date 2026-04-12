@@ -284,13 +284,45 @@ export function runMigrations(): void {
       foreign key(published_by) references staff_users(id)
     );
 
+    create table if not exists field_groups (
+      id text primary key,
+      template_id text not null,
+      group_type text not null check(group_type in ('radio', 'checkbox', 'boxed_input')),
+      group_name text not null,
+      acro_group_name text not null,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(template_id) references pdf_templates(id) on delete cascade,
+      unique(template_id, acro_group_name)
+    );
+
     create index if not exists idx_submissions_practice_status on submissions(practice_id, status);
     create index if not exists idx_patients_practice_name on patients(practice_id, child_last_name, child_first_name);
     create index if not exists idx_pdf_templates_practice_key_status on pdf_templates(practice_id, template_key, status);
     create index if not exists idx_pdf_template_fields_template_section_order on pdf_template_fields(template_id, section_key, display_order);
+    create index if not exists idx_field_groups_template on field_groups(template_id);
   `);
 
   ensureSubmissionColumns();
+  ensureFieldColumns();
+}
+
+function ensureFieldColumns(): void {
+  const rows = db.prepare(`pragma table_info(pdf_template_fields)`).all() as Array<{ name: string }>;
+  const names = new Set(rows.map((r) => r.name));
+
+  if (!names.has('font_size')) {
+    db.exec(`alter table pdf_template_fields add column font_size real default 12`);
+  }
+  if (!names.has('group_id')) {
+    db.exec(`alter table pdf_template_fields add column group_id text`);
+  }
+  if (!names.has('group_value')) {
+    db.exec(`alter table pdf_template_fields add column group_value text`);
+  }
+  if (!names.has('parent_field_id')) {
+    db.exec(`alter table pdf_template_fields add column parent_field_id text`);
+  }
 }
 
 function ensureSubmissionColumns(): void {

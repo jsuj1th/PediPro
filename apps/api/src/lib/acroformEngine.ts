@@ -12,6 +12,16 @@ export type AcroField = {
   width: number;
   height: number;
   options_json?: string | unknown[];
+  font_size?: number | null;
+  group_id?: string | null;
+  group_value?: string | null;
+};
+
+export type AcroGroup = {
+  id: string;
+  group_type: string;
+  group_name: string;
+  acro_group_name: string;
 };
 
 type Responses = Record<string, { value: unknown; updated_at?: string } | unknown>;
@@ -39,6 +49,7 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
   sourcePdfPath: string;
   outputPdfPath: string;
   fields: AcroField[];
+  groups?: AcroGroup[];
 }): Promise<void> {
   if (!fs.existsSync(input.sourcePdfPath)) {
     throw new Error('Source PDF not found.');
@@ -50,7 +61,41 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
   const pages = pdfDoc.getPages();
   const form = pdfDoc.getForm();
 
+  // Build group lookup: id → acro_group_name
+  const groupAcroName = new Map<string, string>();
+  for (const g of (input.groups ?? [])) {
+    groupAcroName.set(g.id, g.acro_group_name);
+  }
+
+  // Pre-process radio_option fields: group by group_id
+  const radioOptionsByGroup = new Map<string, AcroField[]>();
   for (const field of input.fields) {
+    if (field.field_type === 'radio_option' && field.group_id) {
+      const bucket = radioOptionsByGroup.get(field.group_id) ?? [];
+      bucket.push(field);
+      radioOptionsByGroup.set(field.group_id, bucket);
+    }
+  }
+
+  // Create radio groups for radio_option fields
+  for (const [gid, options] of radioOptionsByGroup) {
+    const acroName = groupAcroName.get(gid);
+    if (!acroName) continue;
+    const radio = form.createRadioGroup(acroName);
+    for (const opt of options) {
+      const page = pages[Math.max(0, Number(opt.page_number || 1) - 1)];
+      if (!page) continue;
+      const x = Number(opt.x ?? 0);
+      const y = Number(opt.y ?? 0);
+      const sz = Math.max(10, Math.min(Number(opt.width ?? 14), Number(opt.height ?? 14)));
+      radio.addOptionToPage(opt.group_value ?? opt.field_id, page, { x, y, width: sz, height: sz });
+    }
+  }
+
+  // Process remaining fields
+  for (const field of input.fields) {
+    if (field.field_type === 'radio_option') continue; // already handled above
+
     const page = pages[Math.max(0, Number(field.page_number || 1) - 1)];
     if (!page) continue;
 
@@ -58,6 +103,7 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
     const y = Number(field.y ?? 0);
     const width = Math.max(10, Number(field.width ?? 120));
     const height = Math.max(10, Number(field.height ?? 18));
+    const fontSize = Number(field.font_size ?? 12);
 
     if (field.field_type === 'checkbox') {
       const cb = form.createCheckBox(field.acro_field_name);
@@ -91,10 +137,17 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
       continue;
     }
 
+    // text, textarea, date, signature, box_char
     const text = form.createTextField(field.acro_field_name);
     text.addToPage(page, { x, y, width, height });
+    if (fontSize > 0) {
+      try { text.setFontSize(fontSize); } catch { /* ignore if font not embedded */ }
+    }
     if (field.field_type === 'textarea') {
       text.enableMultiline();
+    }
+    if (field.field_type === 'box_char') {
+      text.setMaxLength(1);
     }
   }
 
@@ -119,6 +172,7 @@ export async function fillAcroformPdfWithResponses(input: {
   acroformPdfPath: string;
   fields: AcroField[];
   responses: Responses;
+  groups?: AcroGroup[];
 }): Promise<Uint8Array> {
   if (!fs.existsSync(input.acroformPdfPath)) {
     throw new Error('AcroForm PDF not found.');
@@ -129,11 +183,39 @@ export async function fillAcroformPdfWithResponses(input: {
   const pdfDoc = await PDFDocument.load(src);
   const form = pdfDoc.getForm();
 
+  // Build group lookup: id → acro_group_name
+  const groupAcroName = new Map<string, string>();
+  for (const g of (input.groups ?? [])) {
+    groupAcroName.set(g.id, g.acro_group_name);
+  }
+
+  // For radio_option fields, the response is stored per group_id (which option is selected)
+  const filledRadioGroups = new Set<string>();
+
   for (const field of input.fields) {
     const responseVal = valueFromResponse(input.responses[field.field_id]);
-    if (responseVal === null || responseVal === '') continue;
 
     try {
+      if (field.field_type === 'radio_option' && field.group_id) {
+        // Each radio option field stores its own checked state (true/false)
+        // The acro radio group stores the currently selected option value
+        if (!filledRadioGroups.has(field.group_id)) {
+          const acroName = groupAcroName.get(field.group_id);
+          if (acroName) {
+            // Find the selected option value from responses across all options in this group
+            const selectedVal = valueFromResponse(input.responses[`__group_${field.group_id}`]);
+            if (selectedVal) {
+              const radio = form.getRadioGroup(acroName);
+              radio.select(String(selectedVal));
+            }
+            filledRadioGroups.add(field.group_id);
+          }
+        }
+        continue;
+      }
+
+      if (responseVal === null || responseVal === '') continue;
+
       if (field.field_type === 'checkbox') {
         const cb = form.getCheckBox(field.acro_field_name);
         if (responseVal === true || responseVal === 'true' || responseVal === '1') cb.check();
@@ -153,6 +235,7 @@ export async function fillAcroformPdfWithResponses(input: {
         continue;
       }
 
+      // text, textarea, date, signature, box_char
       const text = form.getTextField(field.acro_field_name);
       text.setText(String(responseVal));
     } catch {

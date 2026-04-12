@@ -9,14 +9,18 @@ import { fail, ok } from '../lib/response.js';
 import {
   addTemplateField,
   createTemplate,
+  createFieldGroup,
+  deleteFieldGroup,
   deleteTemplateVersion,
   deleteTemplateField,
   getTemplateById,
   getTemplateFields,
   getTemplateWithFields,
+  listFieldGroups,
   listTemplates,
   publishTemplate,
   setTemplateAcroformPath,
+  updateFieldGroup,
   updateTemplateField,
 } from '../db/templateQueries.js';
 import { buildAcroformPdfFromFieldDefinitions } from '../lib/acroformEngine.js';
@@ -126,8 +130,8 @@ staffTemplatesRouter.delete('/:id', (req, res) => {
 
 const fieldSchema = z.object({
   field_id: z.string().min(1).optional(),
-  field_name: z.string().min(1),
-  field_type: z.enum(['text', 'textarea', 'checkbox', 'radio', 'select', 'date', 'signature']),
+  field_name: z.string().optional(),
+  field_type: z.enum(['text', 'textarea', 'checkbox', 'radio', 'select', 'date', 'signature', 'radio_option', 'box_char']),
   acro_field_name: z.string().min(1).optional(),
   required: z.boolean().optional(),
   page_number: z.number().int().min(1).optional(),
@@ -139,9 +143,13 @@ const fieldSchema = z.object({
   validation_json: z.record(z.unknown()).optional(),
   section_key: z.string().optional(),
   display_order: z.number().int().optional(),
+  font_size: z.number().min(4).max(72).optional(),
+  group_id: z.string().nullable().optional(),
+  group_value: z.string().nullable().optional(),
+  parent_field_id: z.string().nullable().optional(),
 });
 
-const allowedFieldTypes = new Set(['text', 'textarea', 'checkbox', 'radio', 'select', 'date', 'signature'] as const);
+const allowedFieldTypes = new Set(['text', 'textarea', 'checkbox', 'radio', 'select', 'date', 'signature', 'radio_option', 'box_char'] as const);
 
 function formatIssues(issues: string[]): string {
   return issues.join('; ');
@@ -307,9 +315,6 @@ staffTemplatesRouter.post('/:id/fields', (req, res) => {
   const issues: string[] = [];
 
   const fieldName = String(firstDefined(raw, 'field_name', 'fieldName', 'label') ?? '').trim();
-  if (!fieldName) {
-    issues.push('field_name: is required');
-  }
 
   const fieldTypeRaw = String(firstDefined(raw, 'field_type', 'fieldType') ?? 'text')
     .trim()
@@ -358,15 +363,21 @@ staffTemplatesRouter.post('/:id/fields', (req, res) => {
 
   try {
     const existing = new Set(getTemplateFields(req.params.id).map((field) => field.field_id));
-    const fieldId = buildUniqueId(String(firstDefined(raw, 'field_id', 'fieldId') ?? fieldName), existing);
+    const fieldId = buildUniqueId(String(firstDefined(raw, 'field_id', 'fieldId') ?? (fieldName || 'field')), existing);
+    const resolvedFieldName = fieldName || fieldId;
     const acroFieldName = requestedAcroFieldName || fieldId;
+
+    const fontSize = parseNumberField(firstDefined(raw, 'font_size', 'fontSize'), 'font_size', issues, { fallback: 12, min: 4 });
+    const groupId = raw.group_id !== undefined ? (typeof raw.group_id === 'string' ? raw.group_id : null) : null;
+    const groupValue = raw.group_value !== undefined ? (typeof raw.group_value === 'string' ? raw.group_value : null) : null;
+    const parentFieldId = raw.parent_field_id !== undefined ? (typeof raw.parent_field_id === 'string' ? raw.parent_field_id : null) : null;
 
     const template = addTemplateField({
       templateId: req.params.id,
       practiceId: req.user!.practiceId,
       field: {
         field_id: fieldId,
-        field_name: fieldName,
+        field_name: resolvedFieldName,
         field_type: fieldType,
         acro_field_name: acroFieldName,
         required,
@@ -379,6 +390,10 @@ staffTemplatesRouter.post('/:id/fields', (req, res) => {
         validation_json: validation,
         section_key: sectionKey,
         display_order: displayOrder,
+        font_size: fontSize,
+        group_id: groupId,
+        group_value: groupValue,
+        parent_field_id: parentFieldId,
       },
     });
     ok(res, template);
@@ -427,6 +442,86 @@ staffTemplatesRouter.delete('/:id/fields/:fieldDbId', (req, res) => {
   }
 });
 
+// ─── Field Group endpoints ────────────────────────────────────────────────────
+
+const groupSchema = z.object({
+  group_type: z.enum(['radio', 'checkbox', 'boxed_input']),
+  group_name: z.string().min(1),
+  acro_group_name: z.string().min(1),
+});
+
+staffTemplatesRouter.get('/:id/groups', (req, res) => {
+  try {
+    getTemplateById(req.params.id, req.user!.practiceId); // ownership check
+    ok(res, listFieldGroups(req.params.id));
+  } catch {
+    fail(res, 'NOT_FOUND', 'Template not found', 404);
+  }
+});
+
+staffTemplatesRouter.post('/:id/groups', (req, res) => {
+  try {
+    getTemplateById(req.params.id, req.user!.practiceId); // ownership check
+  } catch {
+    fail(res, 'NOT_FOUND', 'Template not found', 404);
+    return;
+  }
+
+  const parsed = groupSchema.safeParse(req.body);
+  if (!parsed.success) {
+    fail(res, 'VALIDATION_ERROR', 'Invalid group data', 422, parsed.error.flatten());
+    return;
+  }
+
+  try {
+    const group = createFieldGroup({
+      templateId: req.params.id,
+      group_type: parsed.data.group_type,
+      group_name: parsed.data.group_name,
+      acro_group_name: parsed.data.acro_group_name,
+    });
+    ok(res, group);
+  } catch (error) {
+    fail(res, 'CREATE_ERROR', (error as Error).message, 400);
+  }
+});
+
+staffTemplatesRouter.patch('/:id/groups/:gid', (req, res) => {
+  try {
+    getTemplateById(req.params.id, req.user!.practiceId); // ownership check
+  } catch {
+    fail(res, 'NOT_FOUND', 'Template not found', 404);
+    return;
+  }
+
+  const patchSchema = z.object({
+    group_name: z.string().min(1).optional(),
+    acro_group_name: z.string().min(1).optional(),
+  });
+  const parsed = patchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    fail(res, 'VALIDATION_ERROR', 'Invalid group data', 422, parsed.error.flatten());
+    return;
+  }
+
+  try {
+    const group = updateFieldGroup(req.params.gid, parsed.data);
+    ok(res, group);
+  } catch (error) {
+    fail(res, 'UPDATE_ERROR', (error as Error).message, 400);
+  }
+});
+
+staffTemplatesRouter.delete('/:id/groups/:gid', (req, res) => {
+  try {
+    getTemplateById(req.params.id, req.user!.practiceId); // ownership check
+    deleteFieldGroup(req.params.gid);
+    ok(res, { deleted: true, id: req.params.gid });
+  } catch (error) {
+    fail(res, 'DELETE_ERROR', (error as Error).message, 400);
+  }
+});
+
 staffTemplatesRouter.post('/:id/generate-acroform', async (req, res) => {
   try {
     const template = getTemplateWithFields(req.params.id, req.user!.practiceId) as any;
@@ -438,6 +533,7 @@ staffTemplatesRouter.post('/:id/generate-acroform', async (req, res) => {
       sourcePdfPath: template.source_pdf_path,
       outputPdfPath: outPath,
       fields: template.fields,
+      groups: template.groups ?? [],
     });
 
     const updated = setTemplateAcroformPath({

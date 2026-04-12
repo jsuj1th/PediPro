@@ -6,6 +6,7 @@ import { ParentConfirmationPage } from './pages/ParentConfirmationPage';
 import { ParentCreateAccountPage } from './pages/ParentCreateAccountPage';
 import { ParentDashboardPage } from './pages/ParentDashboardPage';
 import { ParentFormPage } from './pages/ParentFormPage';
+import { PdfFillPage } from './pages/PdfFillPage';
 import { ParentFormsPage } from './pages/ParentFormsPage';
 import { ParentLoginPage } from './pages/ParentLoginPage';
 import { ParentOverviewPage } from './pages/ParentOverviewPage';
@@ -47,6 +48,7 @@ export function App() {
         <Route path="/p/:slug" element={<ParentStartPage />} />
         <Route path="/p/:slug/session/:sessionId/overview" element={<ParentOverviewPage />} />
         <Route path="/p/:slug/session/:sessionId/form/:formId/step/:step" element={<ParentFormPage />} />
+        <Route path="/p/:slug/session/:sessionId/pdf-form" element={<PdfFillPage />} />
         <Route path="/p/:slug/session/:sessionId/confirmation" element={<ParentConfirmationPage />} />
         <Route
           path="/p/:slug/session/:sessionId/create-account"
