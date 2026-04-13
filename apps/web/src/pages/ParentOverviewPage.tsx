@@ -15,7 +15,7 @@ export function ParentOverviewPage() {
     <div className="card mobile">
       <h2>What to Expect</h2>
       <p>
-        Form: <span className="badge">New Patient Paperwork</span>
+        Form: <span className="badge">{template?.title ?? '...'}</span>
       </p>
       <p>Estimated time: 8-10 minutes</p>
       <p>Steps: {template?.steps.length ?? '...'}</p>

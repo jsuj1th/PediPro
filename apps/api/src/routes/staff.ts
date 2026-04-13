@@ -14,6 +14,7 @@ import {
   getStaffByEmail,
   listPatients,
   listSubmissions,
+  expireStaleSubmissions,
   replaceChildTable,
   updatePatientCore,
   upsertOneToOne,
@@ -218,6 +219,11 @@ staffRouter.put('/patients/:id/table/:table', (req, res) => {
 staffRouter.get('/submissions', (req, res) => {
   const submissions = listSubmissions(req.user!.practiceId);
   ok(res, submissions);
+});
+
+staffRouter.post('/submissions/expire-stale', (_req, res) => {
+  const count = expireStaleSubmissions(48);
+  ok(res, { expired: count });
 });
 
 staffRouter.get('/submissions/:id/json', (req, res) => {

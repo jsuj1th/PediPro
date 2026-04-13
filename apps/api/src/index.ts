@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import { config } from './config.js';
 import { runMigrations } from './db/migrate.js';
 import { seedDefaults } from './db/seed.js';
+import { expireStaleSubmissions } from './db/queries.js';
 import { publicRouter } from './routes/public.js';
 import { parentAuthRouter } from './routes/parentAuth.js';
 import { staffRouter } from './routes/staff.js';
@@ -14,6 +15,10 @@ import { fail } from './lib/response.js';
 
 runMigrations();
 seedDefaults();
+
+// Expire stale in_progress sessions on startup and every 6 hours
+expireStaleSubmissions(48);
+setInterval(() => expireStaleSubmissions(48), 6 * 60 * 60 * 1000);
 
 const app = express();
 

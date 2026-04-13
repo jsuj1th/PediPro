@@ -2,6 +2,7 @@ import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
 import { api } from '../lib/api';
+import { getLocal, setLocal } from '../lib/storage';
 import type { FormTemplate, TemplateField } from '../lib/types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
@@ -372,7 +373,16 @@ export function PdfFillPage() {
         method: 'PATCH',
         body: JSON.stringify({ responses }),
       });
-      await api(`/api/submissions/${sessionId}/complete`, { method: 'POST' });
+      const completed = await api<{ confirmation_code: string; status: string }>(
+        `/api/submissions/${sessionId}/complete`,
+        { method: 'POST' },
+      );
+      const start = getLocal<Record<string, unknown>>(`pediform_start_${sessionId}`, {});
+      setLocal(`pediform_start_${sessionId}`, {
+        ...start,
+        confirmation_code: completed.confirmation_code,
+        completed: true,
+      });
       navigate(`/p/${slug}/session/${sessionId}/confirmation`);
     } catch (e) {
       setError((e as Error).message);

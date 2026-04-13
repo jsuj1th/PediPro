@@ -305,6 +305,63 @@ export function runMigrations(): void {
 
   ensureSubmissionColumns();
   ensureFieldColumns();
+  migrateSubmissionsCheckConstraint();
+}
+
+function migrateSubmissionsCheckConstraint(): void {
+  // Check if the submissions table already allows 'expired' status.
+  // SQLite stores the CREATE statement in sqlite_master — we inspect it to detect
+  // whether the migration has already been applied.
+  const row = db
+    .prepare(`select sql from sqlite_master where type='table' and name='submissions'`)
+    .get() as { sql: string } | undefined;
+  if (!row || row.sql.includes("'expired'")) return; // already migrated or table missing
+
+  // Recreate the table with the expanded CHECK constraint (in_progress, completed, exported, expired).
+  // Use a transaction so the rename + copy + drop is atomic.
+  db.exec(`
+    pragma foreign_keys = off;
+    drop table if exists submissions_new;
+
+    create table submissions_new (
+      id text primary key,
+      practice_id text not null,
+      patient_id text,
+      form_id text not null,
+      template_version text not null,
+      visit_type text not null,
+      status text not null check(status in ('in_progress', 'completed', 'exported', 'expired')),
+      form_data_json text not null,
+      forms_completed_json text not null,
+      template_id text,
+      template_version_num integer,
+      responses_json text not null default '{}',
+      completed_pdf_path text,
+      confirmation_code text not null unique,
+      submitted_at text,
+      exported_at text,
+      exported_by text,
+      ip_address text,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(practice_id) references practices(id),
+      foreign key(patient_id) references patients(id),
+      foreign key(exported_by) references staff_users(id)
+    );
+
+    insert into submissions_new
+    select
+      id, practice_id, patient_id, form_id, template_version, visit_type, status,
+      form_data_json, forms_completed_json, template_id, template_version_num,
+      coalesce(responses_json, '{}'),
+      completed_pdf_path, confirmation_code, submitted_at, exported_at, exported_by,
+      ip_address, created_at, updated_at
+    from submissions;
+    drop table submissions;
+    alter table submissions_new rename to submissions;
+
+    pragma foreign_keys = on;
+  `);
 }
 
 function ensureFieldColumns(): void {

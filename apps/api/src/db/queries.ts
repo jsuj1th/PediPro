@@ -651,3 +651,17 @@ export function getStaffByEmail(email: string):
     | { id: string; email: string; password_hash: string; practice_id: string; role: 'staff' | 'admin'; is_active: number }
     | undefined;
 }
+
+// Expire in_progress submissions older than `olderThanHours` hours.
+// Returns the number of rows marked expired.
+export function expireStaleSubmissions(olderThanHours = 48): number {
+  const result = db
+    .prepare(
+      `update submissions
+       set status = 'expired', updated_at = ?
+       where status = 'in_progress'
+         and created_at < datetime('now', '-' || ? || ' hours')`,
+    )
+    .run(nowIso(), olderThanHours);
+  return result.changes as number;
+}
