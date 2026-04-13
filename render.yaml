@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: pediform-api
+    runtime: node
+    buildCommand: cd apps/api && npm install && npm run build
+    startCommand: node apps/api/dist/index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DB_PATH
+        value: /tmp/pediform.db
