@@ -8,12 +8,15 @@ export function ParentConfirmationPage() {
   return (
     <div className="card mobile">
       <h2>Paperwork Submitted</h2>
-      <p>Thank you! Your paperwork is complete.</p>
+      <p>Thank you! Your paperwork is complete. You do not need to fill it in again.</p>
       <p>
         Confirmation Code: <strong>{start.confirmation_code ?? 'N/A'}</strong>
       </p>
+      <p style={{ marginTop: 16, color: '#4b5563' }}>
+        <strong>Optional:</strong> Create an account to access your records in the future.
+      </p>
       <Link to={`/p/${slug}/session/${sessionId}/create-account`}>
-        <button>Create Your Account</button>
+        <button>Create Account (Optional)</button>
       </Link>
     </div>
   );

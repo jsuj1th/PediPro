@@ -8,7 +8,8 @@ build
 *.db-wal
 .DS_Store
 coverage
-
+data/*
+PROGRESS.md
 # Logs
 logs
 *.log

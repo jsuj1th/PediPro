@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { authHeader, api } from '../lib/api';
 
 type Props = {
@@ -22,6 +23,7 @@ export function ParentDashboardPage({ token }: Props) {
     return (
       <div className="card mobile">
         <p>Please login to view your dashboard.</p>
+        <Link to="/parent/login"><button>Login</button></Link>
       </div>
     );
   }
@@ -45,6 +47,9 @@ export function ParentDashboardPage({ token }: Props) {
               <div>Visit Type: {patient.visit_type}</div>
             </div>
           ))}
+          <div style={{ marginTop: 16 }}>
+            <Link to="/parent/forms"><button className="secondary">Browse Available Forms</button></Link>
+          </div>
         </>
       ) : null}
     </div>

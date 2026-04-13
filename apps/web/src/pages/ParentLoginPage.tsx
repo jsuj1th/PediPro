@@ -21,7 +21,7 @@ export function ParentLoginPage({ onAuthenticated }: Props) {
         body: JSON.stringify({ email, password }),
       });
       onAuthenticated(result.token);
-      navigate('/parent/forms');
+      navigate('/parent/dashboard');
     } catch (e) {
       setError((e as Error).message);
     }

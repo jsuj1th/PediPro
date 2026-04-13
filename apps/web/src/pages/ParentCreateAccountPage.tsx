@@ -37,7 +37,7 @@ export function ParentCreateAccountPage({ onAuthenticated }: Props) {
       });
 
       onAuthenticated(result.token);
-      navigate('/parent/forms');
+      navigate('/parent/dashboard');
     } catch (e) {
       const message = (e as Error).message;
       setError(message);
