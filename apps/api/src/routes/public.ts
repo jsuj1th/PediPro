@@ -432,7 +432,7 @@ publicRouter.post('/submissions/:id/complete', (req, res) => {
         .replace(/^_+|_+$/g, '')
         .replace(/_+/g, '_');
 
-      const submissionsDir = path.join(config.rootPath, 'apps', 'data', 'submissions', submission.id);
+      const submissionsDir = path.join(config.dataPath, 'submissions', submission.id);
       fs.mkdirSync(submissionsDir, { recursive: true });
       completedPdfPath = path.join(submissionsDir, `${safeName}_${safeTemplateKey}_completed.pdf`);
       fs.writeFileSync(completedPdfPath, Buffer.from(pdfBytes));

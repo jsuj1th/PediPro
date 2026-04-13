@@ -27,7 +27,7 @@ import { buildAcroformPdfFromFieldDefinitions } from '../lib/acroformEngine.js';
 
 export const staffTemplatesRouter = Router();
 
-const sourceUploadDir = path.join(config.rootPath, 'apps', 'data', 'templates', 'source');
+const sourceUploadDir = path.join(config.dataPath, 'templates', 'source');
 fs.mkdirSync(sourceUploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -104,7 +104,7 @@ staffTemplatesRouter.delete('/:id', (req, res) => {
       if (deleted.acroform_pdf_path && fs.existsSync(deleted.acroform_pdf_path)) {
         fs.unlinkSync(deleted.acroform_pdf_path);
       }
-      const templateDir = path.join(config.rootPath, 'apps', 'data', 'templates', deleted.id);
+      const templateDir = path.join(config.dataPath, 'templates', deleted.id);
       if (fs.existsSync(templateDir)) {
         fs.rmSync(templateDir, { recursive: true, force: true });
       }
@@ -242,22 +242,6 @@ function asStringArray(value: unknown): string[] {
   return [];
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
-  }
-  if (typeof value === 'string' && value.trim()) {
-    try {
-      const parsed = JSON.parse(value) as unknown;
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
-      }
-    } catch {
-      return {};
-    }
-  }
-  return {};
-}
 
 function parseValidationObject(value: unknown, issues: string[]): Record<string, unknown> {
   if (value === undefined || value === null || value === '') return {};
@@ -525,7 +509,7 @@ staffTemplatesRouter.delete('/:id/groups/:gid', (req, res) => {
 staffTemplatesRouter.post('/:id/generate-acroform', async (req, res) => {
   try {
     const template = getTemplateWithFields(req.params.id, req.user!.practiceId) as any;
-    const outputDir = path.join(config.rootPath, 'apps', 'data', 'templates', template.id);
+    const outputDir = path.join(config.dataPath, 'templates', template.id);
     fs.mkdirSync(outputDir, { recursive: true });
     const outPath = path.join(outputDir, `acroform_v${template.version}.pdf`);
 

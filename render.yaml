@@ -4,6 +4,10 @@ services:
     runtime: node
     buildCommand: cd apps/api && npm install && npm run build
     startCommand: node apps/api/dist/index.js
+    disk:
+      name: pediform-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
@@ -12,4 +16,6 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: DB_PATH
-        value: /tmp/pediform.db
+        value: /var/data/pediform.db
+      - key: DATA_PATH
+        value: /var/data
