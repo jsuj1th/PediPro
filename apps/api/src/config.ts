@@ -14,6 +14,7 @@ export const config = {
   port: Number(process.env.PORT ?? 4000),
   jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
   dbPath: process.env.DB_PATH ?? path.join(dataPath, 'pediform.db'),
+  corsOrigin: process.env.CORS_ORIGIN ?? '*',
   rootPath,
   dataPath,
 };
