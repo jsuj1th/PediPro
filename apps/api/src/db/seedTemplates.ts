@@ -3,13 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, nowIso } from './database.js';
 import { config } from '../config.js';
+import seedData from '../seeds/templateSeedData.json' with { type: 'json' };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const SEEDS_DIR = path.join(__dirname, '..', 'seeds');
-const PDFS_DIR = path.join(SEEDS_DIR, 'pdfs');
-const DATA_FILE = path.join(SEEDS_DIR, 'templateSeedData.json');
+// After tsc, this file is at dist/db/seedTemplates.js
+// The pdfs folder is copied to dist/seeds/pdfs/ by the build script
+const PDFS_DIR = path.join(__dirname, '..', 'seeds', 'pdfs');
 
 type TemplateRecord = {
   id: string;
@@ -74,7 +75,7 @@ export function seedTemplates(): void {
   const existing = db.prepare('select count(*) as n from pdf_templates').get() as { n: number };
   if (existing.n > 0) return;
 
-  if (!fs.existsSync(DATA_FILE) || !fs.existsSync(PDFS_DIR)) return;
+  if (!fs.existsSync(PDFS_DIR)) return;
 
   const practice = db
     .prepare('select id from practices where slug = ?')
@@ -86,7 +87,7 @@ export function seedTemplates(): void {
     .get('admin@sunshineclinic.com') as { id: string } | undefined;
   if (!staff) return;
 
-  const { templates, fields, groups } = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')) as {
+  const { templates, fields, groups } = seedData as {
     templates: TemplateRecord[];
     fields: FieldRecord[];
     groups: GroupRecord[];
