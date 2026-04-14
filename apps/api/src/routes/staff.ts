@@ -353,22 +353,7 @@ staffRouter.get('/submissions/:id/pdf', async (req, res) => {
 
     const templateContext = getTemplateBySubmissionContext(req.params.id);
     if (templateContext?.template.acroform_pdf_path) {
-      const templateBoundAnswers = buildTemplateBoundAnswers({
-        template: {
-          id: templateContext.template.id,
-          template_key: templateContext.template.template_key,
-          version: templateContext.template.version,
-        },
-        fields: templateContext.fields as TemplateFieldContext[],
-        responses: (exported.responses ?? {}) as Record<string, unknown>,
-      });
-
-      const responseMap = Object.fromEntries(
-        Object.entries(templateBoundAnswers.answers_by_field_id).map(([fieldId, payload]) => [
-          fieldId,
-          { value: payload.value },
-        ]),
-      );
+      const responseMap = (exported.responses ?? {}) as Record<string, unknown>;
 
       pdfBytes = await fillAcroformPdfWithResponses({
         acroformPdfPath: templateContext.template.acroform_pdf_path,
@@ -383,8 +368,16 @@ staffRouter.get('/submissions/:id/pdf', async (req, res) => {
           width: number;
           height: number;
           options_json?: string | unknown[];
+          group_id?: string | null;
+          group_value?: string | null;
         }>,
         responses: responseMap,
+        groups: templateContext.groups as Array<{
+          id: string;
+          group_type: string;
+          group_name: string;
+          acro_group_name: string;
+        }>,
       });
     } else {
       pdfBytes = await generateSubmissionPdf(exported);

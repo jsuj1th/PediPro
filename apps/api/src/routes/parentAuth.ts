@@ -4,10 +4,12 @@ import { db } from '../db/database.js';
 import {
   addSubmissionEvent,
   createPatientAccount,
+  ensureLinkedPatientForAccount,
   findPracticeById,
   getPatientAccountByEmail,
   getSubmissionById,
   linkPatientAccount,
+  listSubmissionsForAccount,
   touchPatientLogin,
 } from '../db/queries.js';
 import { listPublishedTemplatesForPractice } from '../db/templateQueries.js';
@@ -134,6 +136,12 @@ parentAuthRouter.get('/me', authMiddleware('parent'), (req, res) => {
     return;
   }
 
+  ensureLinkedPatientForAccount({
+    accountId: req.user!.id,
+    practiceId: req.user!.practiceId,
+    seed: String(account.email ?? req.user!.id),
+  });
+
   const patients = db
     .prepare('select * from patients where account_id = ? order by updated_at desc')
     .all(req.user!.id) as Array<Record<string, unknown>>;
@@ -160,6 +168,11 @@ function inferDescription(templateName: string, templateKey: string): string {
   if (templateName.toLowerCase().includes('registration')) return 'Full intake for a new child record and guardian information.';
   return `Complete ${templateName} online.`;
 }
+
+parentAuthRouter.get('/submissions', authMiddleware('parent'), (req, res) => {
+  const submissions = listSubmissionsForAccount(req.user!.id, req.user!.practiceId);
+  ok(res, { submissions });
+});
 
 parentAuthRouter.get('/forms', authMiddleware('parent'), (req, res) => {
   const practice = findPracticeById(req.user!.practiceId);

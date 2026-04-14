@@ -76,7 +76,7 @@ export async function generateSubmissionPdf(exported: CanonicalExport): Promise<
   }
 
   const srcBytes = fs.readFileSync(sourcePath);
-  const pdfDoc = await PDFDocument.load(srcBytes);
+  const pdfDoc = await PDFDocument.load(srcBytes, { ignoreEncryption: true });
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
   const data = pickData(exported);
@@ -173,5 +173,5 @@ export async function generateSubmissionPdf(exported: CanonicalExport): Promise<
   draw(11, 90, 104, data.guardianName, 11);
   draw(11, 396, 104, data.today, 11);
 
-  return pdfDoc.save();
+  return pdfDoc.save({ useObjectStreams: false });
 }

@@ -377,6 +377,7 @@ export function getActivePublishedTemplate(practiceId: string, templateKey = 'pa
 export function getTemplateBySubmissionContext(submissionId: string): {
   template: TemplateRecord;
   fields: Array<Record<string, unknown>>;
+  groups: FieldGroupRecord[];
 } | null {
   const submission = db
     .prepare('select template_id, practice_id from submissions where id = ?')
@@ -397,9 +398,12 @@ export function getTemplateBySubmissionContext(submissionId: string): {
     font_size: row.font_size ?? 12,
   }));
 
+  const groups = listFieldGroups(template.id);
+
   return {
     template,
     fields,
+    groups,
   };
 }
 

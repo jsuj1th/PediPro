@@ -630,6 +630,49 @@ export function createPatientAccount(input: {
   return { id, email: input.email, practiceId: input.practiceId };
 }
 
+const placeholderFirstNames = ['Avery', 'Milo', 'Luna', 'Noah', 'Maya', 'Leo', 'Ivy', 'Owen'];
+const placeholderLastNames = ['Parker', 'Hayes', 'Bennett', 'Reed', 'Foster', 'Brooks', 'Wells', 'Carter'];
+
+function hashSeed(value: string): number {
+  let hash = 0;
+  for (const ch of value) {
+    hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
+  }
+  return Math.abs(hash);
+}
+
+export function ensureLinkedPatientForAccount(input: {
+  accountId: string;
+  practiceId: string;
+  seed?: string;
+}): void {
+  const existing = db.prepare('select id from patients where account_id = ? limit 1').get(input.accountId) as { id: string } | undefined;
+  if (existing) return;
+
+  const seed = input.seed?.trim() || input.accountId;
+  const hash = hashSeed(seed);
+  const firstName = placeholderFirstNames[hash % placeholderFirstNames.length];
+  const lastName = placeholderLastNames[Math.floor(hash / placeholderFirstNames.length) % placeholderLastNames.length];
+  const now = nowIso();
+
+  db.prepare(
+    `insert into patients (
+      id, practice_id, account_id, child_first_name, child_last_name, child_dob, visit_type,
+      preferred_language, sex, race_ethnicity, created_at, updated_at
+    ) values (?, ?, ?, ?, ?, ?, ?, null, null, null, ?, ?)`,
+  ).run(
+    randomUUID(),
+    input.practiceId,
+    input.accountId,
+    firstName,
+    lastName,
+    '2026-01-01',
+    'new_patient',
+    now,
+    now,
+  );
+}
+
 export function getPatientAccountByEmail(email: string):
   | { id: string; email: string; password_hash: string; practice_id: string }
   | undefined {
@@ -640,6 +683,20 @@ export function getPatientAccountByEmail(email: string):
 
 export function touchPatientLogin(accountId: string): void {
   db.prepare('update patient_accounts set last_login_at = ? where id = ?').run(nowIso(), accountId);
+}
+
+export function listSubmissionsForAccount(accountId: string, practiceId: string): Array<Record<string, unknown>> {
+  return db
+    .prepare(
+      `select s.id, s.status, s.submitted_at, s.updated_at, s.confirmation_code,
+              s.form_id, s.template_id, s.visit_type,
+              p.child_first_name, p.child_last_name, p.child_dob, p.id as patient_id
+       from submissions s
+       join patients p on p.id = s.patient_id
+       where p.account_id = ? and s.practice_id = ?
+       order by s.created_at desc`,
+    )
+    .all(accountId, practiceId) as Array<Record<string, unknown>>;
 }
 
 export function getStaffByEmail(email: string):

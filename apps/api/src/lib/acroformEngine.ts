@@ -1,5 +1,7 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 export type AcroField = {
   field_id: string;
@@ -34,6 +36,51 @@ async function getPdfLib() {
   }
 }
 
+async function loadPdfDocument(bytes: Uint8Array | Buffer) {
+  const { PDFDocument } = await getPdfLib();
+  return PDFDocument.load(bytes, { ignoreEncryption: true });
+}
+
+function normalizePdfWithGhostscript(sourcePdfPath: string): string {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'formfiller-pdf-'));
+  const outputPdfPath = path.join(tempDir, 'normalized.pdf');
+
+  try {
+    execFileSync(
+      '/opt/homebrew/bin/gs',
+      ['-q', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pdfwrite', '-o', outputPdfPath, sourcePdfPath],
+      { stdio: 'pipe' },
+    );
+  } catch (error) {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    const message = error instanceof Error ? error.message : 'Ghostscript PDF normalization failed.';
+    throw new Error(`Unable to normalize source PDF for AcroForm generation. ${message}`);
+  }
+
+  return outputPdfPath;
+}
+
+function normalizePdfBytesWithGhostscript(bytes: Uint8Array | Buffer): Uint8Array {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'formfiller-pdf-bytes-'));
+  const inputPdfPath = path.join(tempDir, 'input.pdf');
+  const outputPdfPath = path.join(tempDir, 'normalized.pdf');
+
+  try {
+    fs.writeFileSync(inputPdfPath, Buffer.from(bytes));
+    execFileSync(
+      '/opt/homebrew/bin/gs',
+      ['-q', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pdfwrite', '-o', outputPdfPath, inputPdfPath],
+      { stdio: 'pipe' },
+    );
+    return fs.readFileSync(outputPdfPath);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Ghostscript PDF normalization failed.';
+    throw new Error(`Unable to normalize filled PDF output. ${message}`);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 function asOptions(value: string | unknown[] | undefined): string[] {
   if (!value) return [];
   if (Array.isArray(value)) return value.map((v) => String(v));
@@ -55,9 +102,15 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
     throw new Error('Source PDF not found.');
   }
 
-  const { PDFDocument } = await getPdfLib();
-  const src = fs.readFileSync(input.sourcePdfPath);
-  const pdfDoc = await PDFDocument.load(src);
+  const normalizedSourcePdfPath = normalizePdfWithGhostscript(input.sourcePdfPath);
+
+  let pdfDoc;
+  try {
+    const src = fs.readFileSync(normalizedSourcePdfPath);
+    pdfDoc = await loadPdfDocument(src);
+  } finally {
+    fs.rmSync(path.dirname(normalizedSourcePdfPath), { recursive: true, force: true });
+  }
   const pages = pdfDoc.getPages();
   const form = pdfDoc.getForm();
 
@@ -88,7 +141,7 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
       const x = Number(opt.x ?? 0);
       const y = Number(opt.y ?? 0);
       const sz = Math.max(10, Math.min(Number(opt.width ?? 14), Number(opt.height ?? 14)));
-      radio.addOptionToPage(opt.group_value ?? opt.field_id, page, { x, y, width: sz, height: sz });
+      radio.addOptionToPage(opt.group_value ?? opt.field_id, page, { x, y, width: sz, height: sz, borderWidth: 0 });
     }
   }
 
@@ -107,7 +160,8 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
 
     if (field.field_type === 'checkbox') {
       const cb = form.createCheckBox(field.acro_field_name);
-      cb.addToPage(page, { x, y, width: Math.min(width, height), height: Math.min(width, height) });
+      const sz = Math.min(width, height);
+      cb.addToPage(page, { x, y, width: sz, height: sz, borderWidth: 0 });
       continue;
     }
 
@@ -115,7 +169,7 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
       const radio = form.createRadioGroup(field.acro_field_name);
       const options = asOptions(field.options_json);
       if (options.length === 0) {
-        radio.addOptionToPage('Yes', page, { x, y, width: 12, height: 12 });
+        radio.addOptionToPage('Yes', page, { x, y, width: 12, height: 12, borderWidth: 0 });
       } else {
         options.forEach((option, idx) => {
           radio.addOptionToPage(option, page, {
@@ -123,6 +177,7 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
             y: y - idx * (Math.max(height, 12) + 4),
             width: 12,
             height: 12,
+            borderWidth: 0,
           });
         });
       }
@@ -131,7 +186,7 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
 
     if (field.field_type === 'select') {
       const dd = form.createDropdown(field.acro_field_name);
-      dd.addToPage(page, { x, y, width, height });
+      dd.addToPage(page, { x, y, width, height, borderWidth: 0 });
       const options = asOptions(field.options_json);
       if (options.length > 0) dd.addOptions(options);
       continue;
@@ -139,7 +194,7 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
 
     // text, textarea, date, signature, box_char
     const text = form.createTextField(field.acro_field_name);
-    text.addToPage(page, { x, y, width, height });
+    text.addToPage(page, { x, y, width, height, borderWidth: 0 });
     if (fontSize > 0) {
       try { text.setFontSize(fontSize); } catch { /* ignore if font not embedded */ }
     }
@@ -152,7 +207,7 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
   }
 
   fs.mkdirSync(path.dirname(input.outputPdfPath), { recursive: true });
-  const out = await pdfDoc.save();
+  const out = await pdfDoc.save({ useObjectStreams: false });
   fs.writeFileSync(input.outputPdfPath, out);
 }
 
@@ -168,6 +223,10 @@ function valueFromResponse(entry: unknown): string | boolean | null {
   return String(entry);
 }
 
+function hasMeaningfulResponseValue(value: string | boolean | null): boolean {
+  return value !== null && value !== '';
+}
+
 export async function fillAcroformPdfWithResponses(input: {
   acroformPdfPath: string;
   fields: AcroField[];
@@ -178,9 +237,8 @@ export async function fillAcroformPdfWithResponses(input: {
     throw new Error('AcroForm PDF not found.');
   }
 
-  const { PDFDocument } = await getPdfLib();
   const src = fs.readFileSync(input.acroformPdfPath);
-  const pdfDoc = await PDFDocument.load(src);
+  const pdfDoc = await loadPdfDocument(src);
   const form = pdfDoc.getForm();
 
   // Build group lookup: id → acro_group_name
@@ -204,7 +262,7 @@ export async function fillAcroformPdfWithResponses(input: {
           if (acroName) {
             // Find the selected option value from responses across all options in this group
             const selectedVal = valueFromResponse(input.responses[`__group_${field.group_id}`]);
-            if (selectedVal) {
+            if (hasMeaningfulResponseValue(selectedVal)) {
               const radio = form.getRadioGroup(acroName);
               radio.select(String(selectedVal));
             }
@@ -214,14 +272,14 @@ export async function fillAcroformPdfWithResponses(input: {
         continue;
       }
 
-      if (responseVal === null || responseVal === '') continue;
-
       if (field.field_type === 'checkbox') {
         const cb = form.getCheckBox(field.acro_field_name);
         if (responseVal === true || responseVal === 'true' || responseVal === '1') cb.check();
         else cb.uncheck();
         continue;
       }
+
+      if (!hasMeaningfulResponseValue(responseVal)) continue;
 
       if (field.field_type === 'radio') {
         const radio = form.getRadioGroup(field.acro_field_name);
@@ -243,6 +301,8 @@ export async function fillAcroformPdfWithResponses(input: {
     }
   }
 
+  form.updateFieldAppearances();
   form.flatten();
-  return pdfDoc.save();
+  const out = await pdfDoc.save({ useObjectStreams: false });
+  return normalizePdfBytesWithGhostscript(out);
 }

@@ -27,6 +27,29 @@ import { buildAcroformPdfFromFieldDefinitions } from '../lib/acroformEngine.js';
 
 export const staffTemplatesRouter = Router();
 
+// ─── Acroform auto-rebuild ────────────────────────────────────────────────────
+// When fields or groups change on a template that already has an acroform PDF,
+// rebuild it in the background so the acroform stays in sync with the field list.
+function queueAcroformRebuild(templateId: string, practiceId: string): void {
+  const template = getTemplateById(templateId, practiceId);
+  if (!template?.acroform_pdf_path) return;
+
+  setImmediate(async () => {
+    try {
+      const full = getTemplateWithFields(templateId, practiceId) as any;
+      const outPath = full.acroform_pdf_path as string;
+      await buildAcroformPdfFromFieldDefinitions({
+        sourcePdfPath: full.source_pdf_path,
+        outputPdfPath: outPath,
+        fields: full.fields,
+        groups: full.groups ?? [],
+      });
+    } catch (err) {
+      console.error('[acroform] background rebuild failed for template', templateId, ':', err instanceof Error ? err.message : err);
+    }
+  });
+}
+
 const sourceUploadDir = path.join(config.dataPath, 'templates', 'source');
 fs.mkdirSync(sourceUploadDir, { recursive: true });
 
@@ -380,6 +403,7 @@ staffTemplatesRouter.post('/:id/fields', (req, res) => {
         parent_field_id: parentFieldId,
       },
     });
+    queueAcroformRebuild(req.params.id, req.user!.practiceId);
     ok(res, template);
   } catch (error) {
     fail(res, 'UPDATE_ERROR', friendlyTemplateFieldDbError(error as Error), 400);
@@ -407,6 +431,7 @@ staffTemplatesRouter.patch('/:id/fields/:fieldDbId', (req, res) => {
       fieldDbId: req.params.fieldDbId,
       patch: parsed.data,
     });
+    queueAcroformRebuild(req.params.id, req.user!.practiceId);
     ok(res, template);
   } catch (error) {
     fail(res, 'UPDATE_ERROR', friendlyTemplateFieldDbError(error as Error), 400);
@@ -420,6 +445,7 @@ staffTemplatesRouter.delete('/:id/fields/:fieldDbId', (req, res) => {
       practiceId: req.user!.practiceId,
       fieldDbId: req.params.fieldDbId,
     });
+    queueAcroformRebuild(req.params.id, req.user!.practiceId);
     ok(res, template);
   } catch (error) {
     fail(res, 'UPDATE_ERROR', (error as Error).message, 400);
@@ -464,6 +490,7 @@ staffTemplatesRouter.post('/:id/groups', (req, res) => {
       group_name: parsed.data.group_name,
       acro_group_name: parsed.data.acro_group_name,
     });
+    queueAcroformRebuild(req.params.id, req.user!.practiceId);
     ok(res, group);
   } catch (error) {
     fail(res, 'CREATE_ERROR', (error as Error).message, 400);
@@ -490,6 +517,7 @@ staffTemplatesRouter.patch('/:id/groups/:gid', (req, res) => {
 
   try {
     const group = updateFieldGroup(req.params.gid, parsed.data);
+    queueAcroformRebuild(req.params.id, req.user!.practiceId);
     ok(res, group);
   } catch (error) {
     fail(res, 'UPDATE_ERROR', (error as Error).message, 400);
@@ -500,6 +528,7 @@ staffTemplatesRouter.delete('/:id/groups/:gid', (req, res) => {
   try {
     getTemplateById(req.params.id, req.user!.practiceId); // ownership check
     deleteFieldGroup(req.params.gid);
+    queueAcroformRebuild(req.params.id, req.user!.practiceId);
     ok(res, { deleted: true, id: req.params.gid });
   } catch (error) {
     fail(res, 'DELETE_ERROR', (error as Error).message, 400);

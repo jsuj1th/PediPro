@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { api } from '../lib/api';
+import { api, authHeader } from '../lib/api';
 import { setLocal } from '../lib/storage';
 
 type Practice = {
@@ -10,7 +10,11 @@ type Practice = {
   settings: Record<string, unknown>;
 };
 
-export function ParentStartPage() {
+type Props = {
+  parentToken?: string | null;
+};
+
+export function ParentStartPage({ parentToken }: Props) {
   const { slug = 'sunshine-pediatrics' } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -30,6 +34,23 @@ export function ParentStartPage() {
     child_dob: '',
     visit_type: defaultVisitType,
   });
+
+  useEffect(() => {
+    if (!parentToken) return;
+    api<{ account: { email: string }; patients: any[] }>('/api/parent/me', {
+      headers: authHeader(parentToken),
+    }).then((data) => {
+      if (data.patients.length > 0) {
+        const latest = data.patients[0];
+        setForm((prev) => ({
+          ...prev,
+          child_first_name: latest.child_first_name || prev.child_first_name,
+          child_last_name: latest.child_last_name || prev.child_last_name,
+          child_dob: latest.child_dob || prev.child_dob,
+        }));
+      }
+    }).catch(() => {});
+  }, [parentToken]);
 
   async function handleContinue() {
     setError('');
@@ -103,9 +124,11 @@ export function ParentStartPage() {
       <button onClick={handleContinue} disabled={loading}>
         {loading ? 'Starting...' : 'Continue'}
       </button>
-      <p style={{ marginTop: 12 }}>
-        Already created an account? <Link to="/parent/login">Parent login</Link>
-      </p>
+      {!parentToken && (
+        <p style={{ marginTop: 12 }}>
+          Already created an account? <Link to="/parent/login">Parent login</Link>
+        </p>
+      )}
     </div>
   );
 }

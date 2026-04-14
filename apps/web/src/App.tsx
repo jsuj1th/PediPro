@@ -14,9 +14,18 @@ import { ParentStartPage } from './pages/ParentStartPage';
 import { StaffLoginPage } from './pages/StaffLoginPage';
 import { StaffPatientDetailPage } from './pages/StaffPatientDetailPage';
 import { StaffPatientsPage } from './pages/StaffPatientsPage';
+import { StaffSubmissionsPage } from './pages/StaffSubmissionsPage';
 import { StaffTemplateEditorPage } from './pages/StaffTemplateEditorPage';
 import { StaffTemplatesPage } from './pages/StaffTemplatesPage';
 import { useState } from 'react';
+
+// VITE_APP_MODE: 'admin' | 'patient' | undefined (both)
+const APP_MODE = import.meta.env.VITE_APP_MODE as string | undefined;
+const isAdminOnly = APP_MODE === 'admin';
+const isPatientOnly = APP_MODE === 'patient';
+
+// Default practice slug for the patient portal landing
+const DEFAULT_SLUG = 'sunshine-pediatrics';
 
 export function App() {
   const [parentToken, setParentToken] = useState<string | null>(() => getLocal('pediform_parent_token', null));
@@ -39,31 +48,49 @@ export function App() {
     removeLocal('pediform_staff_token');
   }
 
+  // Determine the root redirect based on mode
+  const rootRedirect = isAdminOnly
+    ? <Navigate to="/staff/login" replace />
+    : isPatientOnly
+      ? <Navigate to={`/p/${DEFAULT_SLUG}`} replace />
+      : <HomePage />;
+
   return (
     <>
-      <AppNav parentToken={parentToken} staffToken={staffToken} onLogout={logout} />
+      <AppNav parentToken={parentToken} staffToken={staffToken} onLogout={logout} appMode={APP_MODE} />
       <Routes>
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={rootRedirect} />
 
-        <Route path="/p/:slug" element={<ParentStartPage />} />
-        <Route path="/p/:slug/session/:sessionId/overview" element={<ParentOverviewPage />} />
-        <Route path="/p/:slug/session/:sessionId/form/:formId/step/:step" element={<ParentFormPage />} />
-        <Route path="/p/:slug/session/:sessionId/pdf-form" element={<PdfFillPage />} />
-        <Route path="/p/:slug/session/:sessionId/confirmation" element={<ParentConfirmationPage />} />
-        <Route
-          path="/p/:slug/session/:sessionId/create-account"
-          element={<ParentCreateAccountPage onAuthenticated={onParentAuth} />}
-        />
+        {/* Patient routes — hidden in admin-only mode */}
+        {!isAdminOnly && (
+          <>
+            <Route path="/p/:slug" element={<ParentStartPage parentToken={parentToken} />} />
+            <Route path="/p/:slug/session/:sessionId/overview" element={<ParentOverviewPage />} />
+            <Route path="/p/:slug/session/:sessionId/form/:formId/step/:step" element={<ParentFormPage />} />
+            <Route path="/p/:slug/session/:sessionId/pdf-form" element={<PdfFillPage />} />
+            <Route path="/p/:slug/session/:sessionId/confirmation" element={<ParentConfirmationPage />} />
+            <Route
+              path="/p/:slug/session/:sessionId/create-account"
+              element={<ParentCreateAccountPage onAuthenticated={onParentAuth} />}
+            />
+            <Route path="/parent/login" element={<ParentLoginPage onAuthenticated={onParentAuth} />} />
+            <Route path="/parent/forms" element={<ParentFormsPage token={parentToken} />} />
+            <Route path="/parent/dashboard" element={<ParentDashboardPage token={parentToken} />} />
+          </>
+        )}
 
-        <Route path="/parent/login" element={<ParentLoginPage onAuthenticated={onParentAuth} />} />
-        <Route path="/parent/forms" element={<ParentFormsPage token={parentToken} />} />
-        <Route path="/parent/dashboard" element={<ParentDashboardPage token={parentToken} />} />
+        {/* Staff routes — hidden in patient-only mode */}
+        {!isPatientOnly && (
+          <>
+            <Route path="/staff/login" element={<StaffLoginPage onAuthenticated={onStaffAuth} />} />
+            <Route path="/staff/patients" element={<StaffPatientsPage token={staffToken} />} />
+            <Route path="/staff/submissions" element={<StaffSubmissionsPage token={staffToken} />} />
+            <Route path="/staff/patients/:id" element={<StaffPatientDetailPage token={staffToken} />} />
+            <Route path="/staff/templates" element={<StaffTemplatesPage token={staffToken} />} />
+            <Route path="/staff/templates/:id/editor" element={<StaffTemplateEditorPage token={staffToken} />} />
+          </>
+        )}
 
-        <Route path="/staff/login" element={<StaffLoginPage onAuthenticated={onStaffAuth} />} />
-        <Route path="/staff/patients" element={<StaffPatientsPage token={staffToken} />} />
-        <Route path="/staff/patients/:id" element={<StaffPatientDetailPage token={staffToken} />} />
-        <Route path="/staff/templates" element={<StaffTemplatesPage token={staffToken} />} />
-        <Route path="/staff/templates/:id/editor" element={<StaffTemplateEditorPage token={staffToken} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </>
