@@ -20,4 +20,4 @@ services:
       - key: DATA_PATH
         value: /var/data
       - key: CORS_ORIGIN
-        value: "*"   # replace with your Netlify URL(s) after first deploy
+        value: "*"   # replace with Netlify URL(s) once frontend is deployed
