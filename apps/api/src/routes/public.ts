@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { config } from '../config.js';
+import { config, resolveDataPath } from '../config.js';
 import { ok, fail } from '../lib/response.js';
 import { loadTemplate } from '../lib/templateLoader.js';
 import { fillAcroformPdfWithResponses } from '../lib/acroformEngine.js';
@@ -356,7 +356,7 @@ publicRouter.get('/submissions/:id/source-pdf', (req, res) => {
     fail(res, 'NOT_FOUND', 'Source PDF not available for this submission', 404);
     return;
   }
-  const pdfPath = path.resolve(templateContext.template.source_pdf_path);
+  const pdfPath = resolveDataPath(templateContext.template.source_pdf_path);
   if (!fs.existsSync(pdfPath)) {
     fail(res, 'NOT_FOUND', 'Source PDF file not found on disk', 404);
     return;
@@ -370,7 +370,7 @@ publicRouter.get('/submissions/:id/acroform-pdf', (req, res) => {
     fail(res, 'NOT_FOUND', 'AcroForm PDF not available for this submission', 404);
     return;
   }
-  const pdfPath = path.resolve(templateContext.template.acroform_pdf_path);
+  const pdfPath = resolveDataPath(templateContext.template.acroform_pdf_path);
   if (!fs.existsSync(pdfPath)) {
     fail(res, 'NOT_FOUND', 'AcroForm PDF file not found on disk', 404);
     return;
@@ -393,7 +393,7 @@ publicRouter.post('/submissions/:id/complete', (req, res) => {
       const responseMap = parseJson<Record<string, unknown>>(submission.responses_json, {});
       const templateWithGroups = getTemplateWithFields(templateContext.template.id, templateContext.template.practice_id) as Record<string, unknown>;
       const pdfBytes = await fillAcroformPdfWithResponses({
-        acroformPdfPath: templateContext.template.acroform_pdf_path,
+        acroformPdfPath: resolveDataPath(templateContext.template.acroform_pdf_path),
         fields: templateContext.fields as Array<{
           field_id: string;
           field_name: string;

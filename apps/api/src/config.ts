@@ -18,3 +18,25 @@ export const config = {
   rootPath,
   dataPath,
 };
+
+/**
+ * Resolve a stored PDF path to an absolute filesystem path.
+ * New paths are stored relative to dataPath (e.g. "templates/source/foo.pdf").
+ * Legacy paths are absolute — returned as-is so existing local DBs keep working.
+ */
+export function resolveDataPath(storedPath: string): string {
+  if (path.isAbsolute(storedPath)) return storedPath;
+  return path.join(config.dataPath, storedPath);
+}
+
+/**
+ * Convert an absolute path under dataPath to a relative path for storage.
+ * If the path is already relative, return it unchanged.
+ */
+export function toRelativeDataPath(absolutePath: string): string {
+  if (!path.isAbsolute(absolutePath)) return absolutePath;
+  const rel = path.relative(config.dataPath, absolutePath);
+  // If it somehow resolves outside dataPath, store the absolute path as fallback
+  if (rel.startsWith('..')) return absolutePath;
+  return rel;
+}

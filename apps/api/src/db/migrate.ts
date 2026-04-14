@@ -1,4 +1,6 @@
+import path from 'node:path';
 import { db } from './database.js';
+import { config } from '../config.js';
 
 export function runMigrations(): void {
   db.exec(`
@@ -306,6 +308,7 @@ export function runMigrations(): void {
   ensureSubmissionColumns();
   ensureFieldColumns();
   migrateSubmissionsCheckConstraint();
+  normalizeTemplatePaths();
 }
 
 function migrateSubmissionsCheckConstraint(): void {
@@ -379,6 +382,30 @@ function ensureFieldColumns(): void {
   }
   if (!names.has('parent_field_id')) {
     db.exec(`alter table pdf_template_fields add column parent_field_id text`);
+  }
+}
+
+/**
+ * Convert any absolute PDF paths stored in pdf_templates to paths relative to
+ * config.dataPath. Runs once on startup — skips rows that are already relative.
+ */
+function normalizeTemplatePaths(): void {
+  const rows = db
+    .prepare(`select id, source_pdf_path, acroform_pdf_path from pdf_templates`)
+    .all() as Array<{ id: string; source_pdf_path: string; acroform_pdf_path: string | null }>;
+
+  const prefix = config.dataPath + path.sep;
+
+  const updateSource = db.prepare(`update pdf_templates set source_pdf_path = ? where id = ?`);
+  const updateAcroform = db.prepare(`update pdf_templates set acroform_pdf_path = ? where id = ?`);
+
+  for (const row of rows) {
+    if (row.source_pdf_path?.startsWith(prefix)) {
+      updateSource.run(row.source_pdf_path.slice(prefix.length), row.id);
+    }
+    if (row.acroform_pdf_path?.startsWith(prefix)) {
+      updateAcroform.run(row.acroform_pdf_path.slice(prefix.length), row.id);
+    }
   }
 }
 
