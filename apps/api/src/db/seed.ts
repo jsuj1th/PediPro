@@ -1,6 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import { db, nowIso, stringifyJson } from './database.js';
 import { hashPassword } from '../lib/auth.js';
+
+// Fixed IDs so JWTs remain valid across free-tier restarts (ephemeral DB).
+const SEED_PRACTICE_ID = 'a1b2c3d4-0000-4000-8000-100000000001';
+const SEED_STAFF_ID    = 'a1b2c3d4-0000-4000-8000-100000000002';
 
 export function seedDefaults(): void {
   const existingPractice = db.prepare('select id from practices where slug = ?').get('sunshine-pediatrics') as
@@ -9,7 +12,7 @@ export function seedDefaults(): void {
 
   let practiceId = existingPractice?.id;
   if (!practiceId) {
-    practiceId = randomUUID();
+    practiceId = SEED_PRACTICE_ID;
     db.prepare(
       `insert into practices (id, name, slug, logo_url, settings_json, created_at)
        values (?, ?, ?, ?, ?, ?)`,
@@ -34,7 +37,7 @@ export function seedDefaults(): void {
       `insert into staff_users (id, email, password_hash, practice_id, role, is_active, created_at)
        values (?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      randomUUID(),
+      SEED_STAFF_ID,
       'admin@sunshineclinic.com',
       hashPassword('Admin@12345'),
       practiceId,
