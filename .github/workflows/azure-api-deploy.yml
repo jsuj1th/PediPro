@@ -28,7 +28,7 @@ jobs:
           mkdir -p deploy
           cp -r apps/api/dist deploy/
           cp apps/api/package.json deploy/
-          cp apps/api/package-lock.json deploy/
+          cp package-lock.json deploy/
           cd deploy && npm install --omit=dev
 
       - name: Deploy to Azure Web App
