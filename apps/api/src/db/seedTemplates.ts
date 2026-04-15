@@ -73,19 +73,35 @@ const PDF_FILES: Record<string, { source: string; acroform: string }> = {
 export function seedTemplates(): void {
   // Skip if any templates already exist
   const existing = db.prepare('select count(*) as n from pdf_templates').get() as { n: number };
-  if (existing.n > 0) return;
+  if (existing.n > 0) {
+    console.log(`[seed] skipping template seed — ${existing.n} template(s) already exist`);
+    return;
+  }
 
-  if (!fs.existsSync(DATA_FILE) || !fs.existsSync(PDFS_DIR)) return;
+  if (!fs.existsSync(DATA_FILE)) {
+    console.warn('[seed] template seed skipped — DATA_FILE not found:', DATA_FILE);
+    return;
+  }
+  if (!fs.existsSync(PDFS_DIR)) {
+    console.warn('[seed] template seed skipped — PDFS_DIR not found:', PDFS_DIR);
+    return;
+  }
 
   const practice = db
     .prepare('select id from practices where slug = ?')
     .get('sunshine-pediatrics') as { id: string } | undefined;
-  if (!practice) return;
+  if (!practice) {
+    console.warn('[seed] template seed skipped — practice "sunshine-pediatrics" not found');
+    return;
+  }
 
   const staff = db
     .prepare('select id from staff_users where email = ?')
     .get('admin@sunshineclinic.com') as { id: string } | undefined;
-  if (!staff) return;
+  if (!staff) {
+    console.warn('[seed] template seed skipped — staff user "admin@sunshineclinic.com" not found');
+    return;
+  }
 
   const { templates, fields, groups } = JSON.parse(fs.readFileSync(DATA_FILE, 'utf-8')) as {
     templates: TemplateRecord[];
@@ -168,5 +184,10 @@ export function seedTemplates(): void {
     }
   });
 
-  seedAll();
+  try {
+    seedAll();
+    console.log(`[seed] seeded ${templates.length} template(s) successfully`);
+  } catch (err) {
+    console.error('[seed] template seed failed:', err instanceof Error ? err.message : err);
+  }
 }
