@@ -27,8 +27,8 @@ jobs:
         run: |
           mkdir -p deploy
           cp -r apps/api/dist deploy/
-          cp apps/api/package.json deploy/
           cp package-lock.json deploy/
+          jq 'del(.scripts.build) | del(.scripts.dev) | del(.devDependencies)' apps/api/package.json > deploy/package.json
           cd deploy && npm install --omit=dev
 
       - name: Deploy to Azure Web App
