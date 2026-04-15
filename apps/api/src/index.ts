@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
+import fs from 'node:fs';
+import path from 'node:path';
 import { config } from './config.js';
 import { runMigrations } from './db/migrate.js';
 import { seedDefaults } from './db/seed.js';
@@ -13,6 +15,8 @@ import { staffRouter } from './routes/staff.js';
 import { staffTemplatesRouter } from './routes/staffTemplates.js';
 import { authMiddleware } from './middleware/auth.js';
 import { fail } from './lib/response.js';
+
+fs.mkdirSync(path.join(config.dataPath, 'templates', 'source'), { recursive: true });
 
 runMigrations();
 seedDefaults();
