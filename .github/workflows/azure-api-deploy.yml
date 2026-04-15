@@ -22,15 +22,18 @@ jobs:
         run: |
           npm install --include=dev
           npm run build
-          npm prune --omit=dev
 
-      - name: Zip deployment package
-        working-directory: apps/api
-        run: zip -r ../../deploy.zip . -x "src/*" "*.ts" ".env"
+      - name: Prepare deployment folder
+        run: |
+          mkdir -p deploy
+          cp -r apps/api/dist deploy/
+          cp apps/api/package.json deploy/
+          cp apps/api/package-lock.json deploy/
+          cd deploy && npm install --omit=dev
 
       - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
         with:
           app-name: pediform-api
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: deploy.zip
+          package: deploy
