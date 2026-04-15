@@ -33,7 +33,7 @@ jobs:
           NETLIFY_SITE_ID: d38a1dd6-915b-468e-a414-4fd1fdd22cdf
         run: |
           npm run build
-          netlify deploy --prod --dir=dist
+          netlify deploy --prod --dir=$(pwd)/dist --no-build
 
       - name: Build and deploy admin site
         working-directory: apps/web
@@ -44,4 +44,4 @@ jobs:
           NETLIFY_SITE_ID: e52b2725-0f53-42bb-b3dc-485f86562cf6
         run: |
           npm run build
-          netlify deploy --prod --dir=dist
+          netlify deploy --prod --dir=$(pwd)/dist --no-build
