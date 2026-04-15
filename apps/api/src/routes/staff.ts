@@ -19,6 +19,7 @@ import {
   updatePatientCore,
   upsertOneToOne,
 } from '../db/queries.js';
+import { resolveDataPath } from '../config.js';
 import { authMiddleware } from '../middleware/auth.js';
 
 export const staffRouter = Router();
@@ -356,7 +357,7 @@ staffRouter.get('/submissions/:id/pdf', async (req, res) => {
       const responseMap = (exported.responses ?? {}) as Record<string, unknown>;
 
       pdfBytes = await fillAcroformPdfWithResponses({
-        acroformPdfPath: templateContext.template.acroform_pdf_path,
+        acroformPdfPath: resolveDataPath(templateContext.template.acroform_pdf_path),
         fields: templateContext.fields as Array<{
           field_id: string;
           field_name: string;
