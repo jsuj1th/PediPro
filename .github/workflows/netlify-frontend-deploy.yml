@@ -1,0 +1,47 @@
+name: Deploy Frontend to Netlify
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/netlify-frontend-deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm install
+
+      - name: Install Netlify CLI
+        run: npm install -g netlify-cli
+
+      - name: Build and deploy patient site
+        working-directory: apps/web
+        env:
+          VITE_APP_MODE: patient
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_TOKEN }}
+          NETLIFY_SITE_ID: d38a1dd6-915b-468e-a414-4fd1fdd22cdf
+        run: |
+          npm run build
+          netlify deploy --prod --dir=dist
+
+      - name: Build and deploy admin site
+        working-directory: apps/web
+        env:
+          VITE_APP_MODE: admin
+          VITE_API_BASE_URL: ${{ vars.API_BASE_URL }}
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_TOKEN }}
+          NETLIFY_SITE_ID: e52b2725-0f53-42bb-b3dc-485f86562cf6
+        run: |
+          npm run build
+          netlify deploy --prod --dir=dist
