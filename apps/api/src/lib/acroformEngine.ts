@@ -1,7 +1,26 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
+
+function findGhostscript(): string | null {
+  // Check common install locations
+  const candidates = [
+    'gs',
+    '/usr/bin/gs',
+    '/usr/local/bin/gs',
+    '/opt/homebrew/bin/gs',
+  ];
+  for (const candidate of candidates) {
+    try {
+      const result = spawnSync(candidate, ['--version'], { stdio: 'pipe' });
+      if (result.status === 0) return candidate;
+    } catch {
+      // not found at this path
+    }
+  }
+  return null;
+}
 
 export type AcroField = {
   field_id: string;
@@ -42,12 +61,18 @@ async function loadPdfDocument(bytes: Uint8Array | Buffer) {
 }
 
 function normalizePdfWithGhostscript(sourcePdfPath: string): string {
+  const gs = findGhostscript();
+  if (!gs) {
+    console.warn('Ghostscript not found; skipping source PDF normalization.');
+    return sourcePdfPath;
+  }
+
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'formfiller-pdf-'));
   const outputPdfPath = path.join(tempDir, 'normalized.pdf');
 
   try {
     execFileSync(
-      '/opt/homebrew/bin/gs',
+      gs,
       ['-q', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pdfwrite', '-o', outputPdfPath, sourcePdfPath],
       { stdio: 'pipe' },
     );
@@ -61,6 +86,12 @@ function normalizePdfWithGhostscript(sourcePdfPath: string): string {
 }
 
 function normalizePdfBytesWithGhostscript(bytes: Uint8Array | Buffer): Uint8Array {
+  const gs = findGhostscript();
+  if (!gs) {
+    console.warn('Ghostscript not found; skipping filled PDF normalization.');
+    return bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  }
+
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'formfiller-pdf-bytes-'));
   const inputPdfPath = path.join(tempDir, 'input.pdf');
   const outputPdfPath = path.join(tempDir, 'normalized.pdf');
@@ -68,7 +99,7 @@ function normalizePdfBytesWithGhostscript(bytes: Uint8Array | Buffer): Uint8Arra
   try {
     fs.writeFileSync(inputPdfPath, Buffer.from(bytes));
     execFileSync(
-      '/opt/homebrew/bin/gs',
+      gs,
       ['-q', '-dNOPAUSE', '-dBATCH', '-sDEVICE=pdfwrite', '-o', outputPdfPath, inputPdfPath],
       { stdio: 'pipe' },
     );
@@ -103,13 +134,16 @@ export async function buildAcroformPdfFromFieldDefinitions(input: {
   }
 
   const normalizedSourcePdfPath = normalizePdfWithGhostscript(input.sourcePdfPath);
+  const normalizedIsTemp = normalizedSourcePdfPath !== input.sourcePdfPath;
 
   let pdfDoc;
   try {
     const src = fs.readFileSync(normalizedSourcePdfPath);
     pdfDoc = await loadPdfDocument(src);
   } finally {
-    fs.rmSync(path.dirname(normalizedSourcePdfPath), { recursive: true, force: true });
+    if (normalizedIsTemp) {
+      fs.rmSync(path.dirname(normalizedSourcePdfPath), { recursive: true, force: true });
+    }
   }
   const pages = pdfDoc.getPages();
   const form = pdfDoc.getForm();
