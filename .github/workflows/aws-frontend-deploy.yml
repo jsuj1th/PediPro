@@ -1,0 +1,65 @@
+name: Deploy Frontend to AWS EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - '.github/workflows/aws-frontend-deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build patient site
+        working-directory: apps/web
+        env:
+          VITE_APP_MODE: patient
+          VITE_API_BASE_URL: ${{ secrets.API_BASE_URL }}
+        run: |
+          npm install
+          npm run build
+          mv dist dist-patient
+
+      - name: Build admin site
+        working-directory: apps/web
+        env:
+          VITE_APP_MODE: admin
+          VITE_API_BASE_URL: ${{ secrets.API_BASE_URL }}
+        run: |
+          npm run build
+          mv dist dist-admin
+
+      - name: Package frontend builds
+        run: |
+          tar -czf frontend.tar.gz -C apps/web dist-patient dist-admin
+
+      - name: Copy to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: frontend.tar.gz
+          target: /home/ec2-user/
+
+      - name: Extract and reload Nginx
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            mkdir -p /var/www/patient /var/www/admin
+            tar -xzf /home/ec2-user/frontend.tar.gz -C /home/ec2-user/
+            cp -r /home/ec2-user/dist-patient/. /var/www/patient/
+            cp -r /home/ec2-user/dist-admin/. /var/www/admin/
+            rm -rf /home/ec2-user/frontend.tar.gz /home/ec2-user/dist-patient /home/ec2-user/dist-admin
+            sudo systemctl reload nginx
