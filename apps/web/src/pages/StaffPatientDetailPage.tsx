@@ -177,6 +177,34 @@ function coerceResponseInputValue(fieldType: string, value: unknown): unknown {
   return value;
 }
 
+type AssignmentRecord = {
+  id: string;
+  token: string;
+  status: string;
+  expires_at: string;
+  created_at: string;
+  template_name: string;
+  template_key: string;
+  assigned_by_email: string;
+  submission_id: string | null;
+};
+
+type PublishedTemplate = {
+  id: string;
+  name: string;
+  template_key: string;
+};
+
+type CreatedAssignment = {
+  id: string;
+  token: string;
+  fill_url: string;
+  qr_code_data_url: string;
+  patient_name: string;
+  template_name: string;
+  expires_at: string;
+};
+
 export function StaffPatientDetailPage({ token }: Props) {
   const { id = '' } = useParams();
   const navigate = useNavigate();
@@ -192,6 +220,90 @@ export function StaffPatientDetailPage({ token }: Props) {
   const [responseDrafts, setResponseDrafts] = useState<Record<string, Record<string, unknown>>>({});
   const [loadingResponsesFor, setLoadingResponsesFor] = useState('');
   const [savingResponsesFor, setSavingResponsesFor] = useState('');
+
+  // Form assignment state
+  const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
+  const [templates, setTemplates] = useState<PublishedTemplate[]>([]);
+  const [showAssignForm, setShowAssignForm] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [expiresInDays, setExpiresInDays] = useState(7);
+  const [assigning, setAssigning] = useState(false);
+  const [createdAssignment, setCreatedAssignment] = useState<CreatedAssignment | null>(null);
+  const [smsPhone, setSmsPhone] = useState('');
+  const [smsSending, setSmsSending] = useState(false);
+  const [smsResult, setSmsResult] = useState('');
+  const [copiedLink, setCopiedLink] = useState(false);
+
+  async function loadAssignments() {
+    if (!token) return;
+    try {
+      const result = await api<AssignmentRecord[]>(`/api/staff/assignments/patient/${id}`, {
+        headers: authHeader(token),
+      });
+      setAssignments(result);
+    } catch {
+      // non-fatal
+    }
+  }
+
+  async function loadTemplates() {
+    if (!token) return;
+    try {
+      const result = await api<any[]>('/api/staff/templates', { headers: authHeader(token) });
+      setTemplates(
+        result
+          .filter((t: any) => t.status === 'published')
+          .map((t: any) => ({ id: t.id, name: t.name, template_key: t.template_key })),
+      );
+    } catch {
+      // non-fatal
+    }
+  }
+
+  async function handleAssign() {
+    if (!token || !selectedTemplateId) return;
+    setAssigning(true);
+    setSmsResult('');
+    try {
+      const result = await api<CreatedAssignment>('/api/staff/assignments', {
+        method: 'POST',
+        headers: authHeader(token),
+        body: JSON.stringify({ patient_id: id, template_id: selectedTemplateId, expires_in_days: expiresInDays }),
+      });
+      setCreatedAssignment(result);
+      setShowAssignForm(false);
+      await loadAssignments();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setAssigning(false);
+    }
+  }
+
+  async function handleSendSms(assignmentId: string) {
+    if (!token || !smsPhone) return;
+    setSmsSending(true);
+    setSmsResult('');
+    try {
+      await api(`/api/staff/assignments/${assignmentId}/send-sms`, {
+        method: 'POST',
+        headers: authHeader(token),
+        body: JSON.stringify({ phone: smsPhone }),
+      });
+      setSmsResult('SMS sent successfully.');
+    } catch (e) {
+      setSmsResult(`Failed: ${(e as Error).message}`);
+    } finally {
+      setSmsSending(false);
+    }
+  }
+
+  function copyLink(url: string) {
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    });
+  }
 
   async function load() {
     if (!token) return;
@@ -223,6 +335,8 @@ export function StaffPatientDetailPage({ token }: Props) {
       return;
     }
     load();
+    loadAssignments();
+    loadTemplates();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, id]);
 
@@ -501,6 +615,175 @@ export function StaffPatientDetailPage({ token }: Props) {
         <button onClick={saveCore} disabled={savingTable === 'core'}>
           {savingTable === 'core' ? 'Saving...' : 'Save Core'}
         </button>
+
+        {/* ── Form Assignment Panel ── */}
+        <div className="card" style={{ background: '#f0f7ff', marginBottom: 20, marginTop: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ margin: 0 }}>Assign a Form</h3>
+            <button onClick={() => { setShowAssignForm((v) => !v); setCreatedAssignment(null); }}>
+              {showAssignForm ? 'Cancel' : '+ Assign Form'}
+            </button>
+          </div>
+
+          {showAssignForm && (
+            <div style={{ marginTop: 16 }}>
+              <div className="row">
+                <div className="field">
+                  <label>Form Template</label>
+                  <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
+                    <option value="">-- Select a published template --</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label>Expires After (days)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={90}
+                    value={expiresInDays}
+                    onChange={(e) => setExpiresInDays(Number(e.target.value))}
+                    style={{ width: 80 }}
+                  />
+                </div>
+              </div>
+              <button
+                onClick={handleAssign}
+                disabled={assigning || !selectedTemplateId}
+                className="btn"
+              >
+                {assigning ? 'Creating...' : 'Create Assignment Link'}
+              </button>
+            </div>
+          )}
+
+          {createdAssignment && (
+            <div style={{ marginTop: 16, padding: 16, background: '#fff', borderRadius: 8, border: '1px solid #b3d4f7' }}>
+              <p style={{ fontWeight: 600, marginBottom: 8 }}>
+                Form assigned: <em>{createdAssignment.template_name}</em>
+              </p>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Patient Fill Link</label>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    readOnly
+                    value={createdAssignment.fill_url}
+                    style={{ flex: 1, fontFamily: 'monospace', fontSize: 13 }}
+                  />
+                  <button onClick={() => copyLink(createdAssignment.fill_url)} style={{ whiteSpace: 'nowrap' }}>
+                    {copiedLink ? 'Copied!' : 'Copy Link'}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>QR Code</label>
+                <img
+                  src={createdAssignment.qr_code_data_url}
+                  alt="QR code for form link"
+                  style={{ border: '1px solid #ddd', borderRadius: 4 }}
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Send via SMS</label>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="tel"
+                    placeholder="+15551234567"
+                    value={smsPhone}
+                    onChange={(e) => setSmsPhone(e.target.value)}
+                    style={{ width: 180 }}
+                  />
+                  <button
+                    onClick={() => handleSendSms(createdAssignment.id)}
+                    disabled={smsSending || !smsPhone}
+                  >
+                    {smsSending ? 'Sending...' : 'Send SMS'}
+                  </button>
+                </div>
+                {smsResult && (
+                  <p style={{ marginTop: 6, fontSize: 13, color: smsResult.startsWith('Failed') ? '#c00' : '#0a0' }}>
+                    {smsResult}
+                  </p>
+                )}
+                <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
+                  Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER to be configured.
+                </p>
+              </div>
+
+              <p style={{ fontSize: 12, color: '#888', marginTop: 12 }}>
+                Expires: {new Date(createdAssignment.expires_at).toLocaleDateString()}
+              </p>
+            </div>
+          )}
+
+          {assignments.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <h4 style={{ marginBottom: 8 }}>Existing Assignments</h4>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Form</th>
+                    <th>Status</th>
+                    <th>Assigned By</th>
+                    <th>Expires</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {assignments.map((a) => (
+                    <tr key={a.id}>
+                      <td>{a.template_name}</td>
+                      <td>
+                        <span style={{
+                          padding: '2px 8px',
+                          borderRadius: 4,
+                          fontSize: 12,
+                          background: a.status === 'completed' ? '#d4edda' : a.status === 'expired' ? '#f8d7da' : a.status === 'in_progress' ? '#fff3cd' : '#cfe2ff',
+                          color: a.status === 'completed' ? '#155724' : a.status === 'expired' ? '#721c24' : a.status === 'in_progress' ? '#856404' : '#084298',
+                        }}>
+                          {a.status}
+                        </span>
+                      </td>
+                      <td>{a.assigned_by_email}</td>
+                      <td>{new Date(a.expires_at).toLocaleDateString()}</td>
+                      <td>
+                        {(a.status === 'pending' || a.status === 'in_progress') && (
+                          <button
+                            className="secondary"
+                            style={{ fontSize: 12, padding: '2px 8px' }}
+                            onClick={async () => {
+                              if (!token) return;
+                              const result = await api<{ fill_url: string; qr_code_data_url: string }>(
+                                `/api/staff/assignments/${a.id}/link`,
+                                { headers: authHeader(token) },
+                              );
+                              setCreatedAssignment({
+                                id: a.id,
+                                token: a.token,
+                                fill_url: result.fill_url,
+                                qr_code_data_url: result.qr_code_data_url,
+                                patient_name: `${detail?.patient?.child_first_name ?? ''} ${detail?.patient?.child_last_name ?? ''}`,
+                                template_name: a.template_name,
+                                expires_at: a.expires_at,
+                              });
+                            }}
+                          >
+                            View Link
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
 
         <h3 style={{ marginTop: 24 }}>Editable Sections</h3>
 

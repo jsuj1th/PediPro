@@ -414,7 +414,8 @@ export function PdfFillPage() {
   }
 
   return (
-    <div style={{ maxWidth: TARGET_WIDTH + 40, margin: '0 auto', padding: '20px 16px' }}>
+    <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+    <div style={{ maxWidth: TARGET_WIDTH + 40, margin: '0 auto', padding: '20px 16px', minWidth: TARGET_WIDTH + 40 }}>
       <h2 style={{ marginBottom: 4 }}>{template.title}</h2>
       <p style={{ marginTop: 0, marginBottom: 20, color: '#555' }}>
         Fill in the highlighted fields directly on the form below, then click Submit.
@@ -452,6 +453,7 @@ export function PdfFillPage() {
           Back
         </button>
       </div>
+    </div>
     </div>
   );
 }

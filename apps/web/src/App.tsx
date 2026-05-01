@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppNav } from './components/AppNav';
 import { getLocal, removeLocal, setLocal } from './lib/storage';
+import { AssignmentVerifyPage } from './pages/AssignmentVerifyPage';
 import { HomePage } from './pages/HomePage';
 import { ParentConfirmationPage } from './pages/ParentConfirmationPage';
 import { ParentCreateAccountPage } from './pages/ParentCreateAccountPage';
@@ -90,6 +91,9 @@ export function App() {
             <Route path="/staff/templates/:id/editor" element={<StaffTemplateEditorPage token={staffToken} />} />
           </>
         )}
+
+        {/* Assignment fill link — accessible in all modes */}
+        <Route path="/fill/:token" element={<AssignmentVerifyPage />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

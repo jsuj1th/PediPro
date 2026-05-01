@@ -15,6 +15,12 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-change-me',
   dbPath: process.env.DB_PATH ?? path.join(dataPath, 'pediform.db'),
   corsOrigin: process.env.CORS_ORIGIN ?? '*',
+  frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:5173',
+  twilio: {
+    accountSid: process.env.TWILIO_ACCOUNT_SID ?? '',
+    authToken: process.env.TWILIO_AUTH_TOKEN ?? '',
+    fromNumber: process.env.TWILIO_FROM_NUMBER ?? '',
+  },
   rootPath,
   dataPath,
 };

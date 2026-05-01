@@ -298,11 +298,32 @@ export function runMigrations(): void {
       unique(template_id, acro_group_name)
     );
 
+    create table if not exists form_assignments (
+      id text primary key,
+      practice_id text not null,
+      patient_id text not null,
+      template_id text not null,
+      assigned_by text not null,
+      token text not null unique,
+      status text not null check(status in ('pending', 'in_progress', 'completed', 'expired')),
+      submission_id text,
+      expires_at text not null,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(practice_id) references practices(id),
+      foreign key(patient_id) references patients(id),
+      foreign key(template_id) references pdf_templates(id),
+      foreign key(assigned_by) references staff_users(id)
+    );
+
     create index if not exists idx_submissions_practice_status on submissions(practice_id, status);
     create index if not exists idx_patients_practice_name on patients(practice_id, child_last_name, child_first_name);
     create index if not exists idx_pdf_templates_practice_key_status on pdf_templates(practice_id, template_key, status);
     create index if not exists idx_pdf_template_fields_template_section_order on pdf_template_fields(template_id, section_key, display_order);
     create index if not exists idx_field_groups_template on field_groups(template_id);
+    create index if not exists idx_form_assignments_token on form_assignments(token);
+    create index if not exists idx_form_assignments_patient on form_assignments(patient_id);
+    create index if not exists idx_form_assignments_practice_status on form_assignments(practice_id, status);
   `);
 
   ensureSubmissionColumns();

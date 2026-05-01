@@ -25,6 +25,7 @@ import {
   findPracticeBySlug,
   getSubmissionById,
 } from '../db/queries.js';
+import { completeAssignmentBySubmissionId } from '../db/assignmentQueries.js';
 
 export const publicRouter = Router();
 
@@ -441,6 +442,8 @@ publicRouter.post('/submissions/:id/complete', (req, res) => {
     const completed = completedPdfPath
       ? completeSubmissionWithPdf(submission.id, completedPdfPath)
       : completeSubmission(submission.id);
+
+    completeAssignmentBySubmissionId(submission.id);
 
     addSubmissionEvent({
       submissionId: completed.id,

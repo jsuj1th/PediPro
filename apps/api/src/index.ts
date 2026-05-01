@@ -13,8 +13,11 @@ import { publicRouter } from './routes/public.js';
 import { parentAuthRouter } from './routes/parentAuth.js';
 import { staffRouter } from './routes/staff.js';
 import { staffTemplatesRouter } from './routes/staffTemplates.js';
+import { staffAssignmentsRouter } from './routes/staffAssignments.js';
+import { assignmentsRouter } from './routes/assignments.js';
 import { authMiddleware } from './middleware/auth.js';
 import { fail } from './lib/response.js';
+import { expireStaleAssignments } from './db/assignmentQueries.js';
 
 fs.mkdirSync(path.join(config.dataPath, 'templates', 'source'), { recursive: true });
 
@@ -25,6 +28,10 @@ seedTemplates();
 // Expire stale in_progress sessions on startup and every 6 hours
 expireStaleSubmissions(48);
 setInterval(() => expireStaleSubmissions(48), 6 * 60 * 60 * 1000);
+
+// Expire stale form assignments on startup and every 6 hours
+expireStaleAssignments();
+setInterval(() => expireStaleAssignments(), 6 * 60 * 60 * 1000);
 
 const app = express();
 
@@ -45,6 +52,8 @@ app.use('/api', publicRouter);
 app.use('/api/parent', parentAuthRouter);
 app.use('/api/staff', staffRouter);
 app.use('/api/staff/templates', authMiddleware('staff'), staffTemplatesRouter);
+app.use('/api/staff/assignments', authMiddleware('staff'), staffAssignmentsRouter);
+app.use('/api/assignments', assignmentsRouter);
 
 app.use((_req, res) => {
   fail(res, 'NOT_FOUND', 'Route not found', 404);

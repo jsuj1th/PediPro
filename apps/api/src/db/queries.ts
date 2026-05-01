@@ -26,6 +26,7 @@ export type SubmissionRow = {
 
 export function createSubmission(input: {
   practiceId: string;
+  patientId?: string;
   visitType: string;
   formId: string;
   templateVersion: string;
@@ -43,10 +44,11 @@ export function createSubmission(input: {
       id, practice_id, patient_id, form_id, template_version, template_id, template_version_num, visit_type, status,
       form_data_json, responses_json, completed_pdf_path, forms_completed_json, confirmation_code, submitted_at,
       exported_at, exported_by, ip_address, created_at, updated_at
-    ) values (?, ?, null, ?, ?, ?, ?, ?, 'in_progress', ?, ?, null, ?, ?, null, null, null, ?, ?, ?)`,
+    ) values (?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, null, ?, ?, null, null, null, ?, ?, ?)`,
   ).run(
     id,
     input.practiceId,
+    input.patientId ?? null,
     input.formId,
     input.templateVersion,
     input.templateId ?? null,
