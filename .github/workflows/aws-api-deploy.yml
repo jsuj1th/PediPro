@@ -28,8 +28,7 @@ jobs:
           mkdir -p deploy
           cp -r apps/api/dist deploy/
           jq 'del(.scripts) | del(.devDependencies)' apps/api/package.json > deploy/package.json
-          cp package-lock.json deploy/
-          cd deploy && npm install --omit=dev
+          npm install --omit=dev --prefix deploy
           tar -czf pediform-api.tar.gz -C deploy .
 
       - name: Copy package to EC2
