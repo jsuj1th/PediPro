@@ -1,0 +1,55 @@
+name: Deploy API to AWS EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/aws-api-deploy.yml'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install and build
+        working-directory: apps/api
+        run: |
+          npm install --include=dev
+          npm run build
+
+      - name: Prepare deployment package
+        run: |
+          mkdir -p deploy
+          cp -r apps/api/dist deploy/
+          jq 'del(.scripts) | del(.devDependencies)' apps/api/package.json > deploy/package.json
+          cp package-lock.json deploy/
+          cd deploy && npm install --omit=dev
+          tar -czf pediform-api.tar.gz -C deploy .
+
+      - name: Copy package to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: pediform-api.tar.gz
+          target: /home/ec2-user/
+
+      - name: Extract and restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            mkdir -p /var/app
+            tar -xzf /home/ec2-user/pediform-api.tar.gz -C /var/app
+            rm /home/ec2-user/pediform-api.tar.gz
+            pm2 restart pediform-api || pm2 start /var/app/dist/index.js --name pediform-api
+            pm2 save
