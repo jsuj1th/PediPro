@@ -299,10 +299,30 @@ export function StaffPatientDetailPage({ token }: Props) {
   }
 
   function copyLink(url: string) {
-    navigator.clipboard.writeText(url).then(() => {
+    const onSuccess = () => {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2000);
-    });
+    };
+
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(url).then(onSuccess).catch(() => {
+        fallbackCopy(url, onSuccess);
+      });
+    } else {
+      fallbackCopy(url, onSuccess);
+    }
+  }
+
+  function fallbackCopy(url: string, onSuccess: () => void) {
+    const el = document.createElement('textarea');
+    el.value = url;
+    el.style.position = 'fixed';
+    el.style.opacity = '0';
+    document.body.appendChild(el);
+    el.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(el);
+    if (ok) onSuccess();
   }
 
   async function load() {
