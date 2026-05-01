@@ -1,13 +1,12 @@
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist';
+import { GlobalWorkerOptions, getDocument, version } from 'pdfjs-dist';
 import { api } from '../lib/api';
 import { getLocal, setLocal } from '../lib/storage';
 import type { FormTemplate, TemplateField } from '../lib/types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4000';
-const WORKER_URL = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
-GlobalWorkerOptions.workerSrc = WORKER_URL;
+GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
 
 // Must match PdfFieldMapper's targetWidth so coordinates line up exactly
 const TARGET_WIDTH = 760;
