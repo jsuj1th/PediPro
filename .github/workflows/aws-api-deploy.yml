@@ -6,6 +6,7 @@ on:
     paths:
       - 'apps/api/**'
       - '.github/workflows/aws-api-deploy.yml'
+  workflow_dispatch:
 
 jobs:
   deploy:
