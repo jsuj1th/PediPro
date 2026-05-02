@@ -52,7 +52,8 @@ jobs:
           script: |
             pm2 stop pediform-api || true
             sudo rm -rf /var/app/dist /var/app/node_modules
-            mkdir -p /var/app
+            sudo mkdir -p /var/app
+            sudo chown -R ec2-user:ec2-user /var/app
             tar -xzf /home/ec2-user/pediform-api.tar.gz -C /var/app
             rm /home/ec2-user/pediform-api.tar.gz
             pm2 restart pediform-api || pm2 start /var/app/dist/index.js --name pediform-api
