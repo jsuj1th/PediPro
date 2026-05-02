@@ -1,15 +1,65 @@
-name: Deploy Frontend to AWS EC2
+name: Deploy to AWS EC2
 
 on:
   push:
     branches: [main]
     paths:
+      - 'apps/api/**'
       - 'apps/web/**'
-      - '.github/workflows/aws-frontend-deploy.yml'
+      - '.github/workflows/deploy.yml'
   workflow_dispatch:
 
 jobs:
-  deploy:
+  deploy-api:
+    name: Deploy API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install and build
+        working-directory: apps/api
+        run: |
+          npm install --include=dev
+          npm run build
+
+      - name: Prepare deployment package
+        run: |
+          mkdir -p deploy
+          cp -r apps/api/dist deploy/
+          jq 'del(.scripts) | del(.devDependencies)' apps/api/package.json > deploy/package.json
+          npm install --omit=dev --prefix deploy
+          tar -czf pediform-api.tar.gz -C deploy .
+
+      - name: Copy package to EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: pediform-api.tar.gz
+          target: /home/ec2-user/
+
+      - name: Extract and restart
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            pm2 stop pediform-api || true
+            sudo rm -rf /var/app/dist /var/app/node_modules
+            mkdir -p /var/app
+            tar -xzf /home/ec2-user/pediform-api.tar.gz -C /var/app
+            rm /home/ec2-user/pediform-api.tar.gz
+            pm2 restart pediform-api || pm2 start /var/app/dist/index.js --name pediform-api
+            pm2 save
+
+  deploy-frontend:
+    name: Deploy Frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
