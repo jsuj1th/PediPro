@@ -225,15 +225,15 @@ export function StaffPatientDetailPage({ token }: Props) {
   const [assignments, setAssignments] = useState<AssignmentRecord[]>([]);
   const [templates, setTemplates] = useState<PublishedTemplate[]>([]);
   const [showAssignForm, setShowAssignForm] = useState(false);
-  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
   const [expiresInDays, setExpiresInDays] = useState(7);
   const [assigning, setAssigning] = useState(false);
-  const [createdAssignment, setCreatedAssignment] = useState<CreatedAssignment | null>(null);
+  const [createdAssignments, setCreatedAssignments] = useState<CreatedAssignment[]>([]);
   const [smsPhone, setSmsPhone] = useState('');
   const [smsSending, setSmsSending] = useState(false);
   const [smsResult, setSmsResult] = useState('');
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [showQr, setShowQr] = useState(false);
+  const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
+  const [showQrId, setShowQrId] = useState<string | null>(null);
 
   async function loadAssignments() {
     if (!token) return;
@@ -261,19 +261,31 @@ export function StaffPatientDetailPage({ token }: Props) {
     }
   }
 
+  function toggleTemplate(templateId: string) {
+    setSelectedTemplateIds((prev) =>
+      prev.includes(templateId) ? prev.filter((t) => t !== templateId) : [...prev, templateId],
+    );
+  }
+
   async function handleAssign() {
-    if (!token || !selectedTemplateId) return;
+    if (!token || selectedTemplateIds.length === 0) return;
     setAssigning(true);
     setSmsResult('');
     try {
-      const result = await api<CreatedAssignment>('/api/staff/assignments', {
-        method: 'POST',
-        headers: authHeader(token),
-        body: JSON.stringify({ patient_id: id, template_id: selectedTemplateId, expires_in_days: expiresInDays }),
-      });
-      setCreatedAssignment(result);
+      const days = expiresInDays >= 1 ? expiresInDays : 7;
+      const results = await Promise.all(
+        selectedTemplateIds.map((template_id) =>
+          api<CreatedAssignment>('/api/staff/assignments', {
+            method: 'POST',
+            headers: authHeader(token),
+            body: JSON.stringify({ patient_id: id, template_id, expires_in_days: days }),
+          }),
+        ),
+      );
+      setCreatedAssignments(results);
       setShowAssignForm(false);
-      setShowQr(false);
+      setShowQrId(null);
+      setSelectedTemplateIds([]);
       await loadAssignments();
     } catch (e) {
       setError((e as Error).message);
@@ -290,24 +302,28 @@ export function StaffPatientDetailPage({ token }: Props) {
         method: 'DELETE',
         headers: authHeader(token),
       });
-      if (createdAssignment?.id === assignmentId) setCreatedAssignment(null);
+      setCreatedAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
       await loadAssignments();
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
-  async function handleSendSms(assignmentId: string) {
-    if (!token || !smsPhone) return;
+  async function handleSendSmsAll() {
+    if (!token || !smsPhone || createdAssignments.length === 0) return;
     setSmsSending(true);
     setSmsResult('');
     try {
-      await api(`/api/staff/assignments/${assignmentId}/send-sms`, {
-        method: 'POST',
-        headers: authHeader(token),
-        body: JSON.stringify({ phone: smsPhone }),
-      });
-      setSmsResult('SMS sent successfully.');
+      await Promise.all(
+        createdAssignments.map((a) =>
+          api(`/api/staff/assignments/${a.id}/send-sms`, {
+            method: 'POST',
+            headers: authHeader(token),
+            body: JSON.stringify({ phone: smsPhone }),
+          }),
+        ),
+      );
+      setSmsResult(`SMS sent for ${createdAssignments.length} form(s).`);
     } catch (e) {
       setSmsResult(`Failed: ${(e as Error).message}`);
     } finally {
@@ -315,10 +331,10 @@ export function StaffPatientDetailPage({ token }: Props) {
     }
   }
 
-  function copyLink(url: string) {
+  function copyLink(id: string, url: string) {
     const onSuccess = () => {
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2000);
+      setCopiedLinkId(id);
+      setTimeout(() => setCopiedLinkId(null), 2000);
     };
 
     if (navigator.clipboard) {
@@ -656,24 +672,15 @@ export function StaffPatientDetailPage({ token }: Props) {
         {/* ── Form Assignment Panel ── */}
         <div className="card" style={{ background: '#f0f7ff', marginBottom: 20, marginTop: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ margin: 0 }}>Assign a Form</h3>
-            <button onClick={() => { setShowAssignForm((v) => !v); setCreatedAssignment(null); }}>
-              {showAssignForm ? 'Cancel' : '+ Assign Form'}
+            <h3 style={{ margin: 0 }}>Assign Forms</h3>
+            <button onClick={() => { setShowAssignForm((v) => !v); setCreatedAssignments([]); }}>
+              {showAssignForm ? 'Cancel' : '+ Assign Forms'}
             </button>
           </div>
 
           {showAssignForm && (
             <div style={{ marginTop: 16 }}>
               <div className="row">
-                <div className="field">
-                  <label>Form Template</label>
-                  <select value={selectedTemplateId} onChange={(e) => setSelectedTemplateId(e.target.value)}>
-                    <option value="">-- Select a published template --</option>
-                    {templates.map((t) => (
-                      <option key={t.id} value={t.id}>{t.name}</option>
-                    ))}
-                  </select>
-                </div>
                 <div className="field">
                   <label>Expires After (days)</label>
                   <input
@@ -686,47 +693,87 @@ export function StaffPatientDetailPage({ token }: Props) {
                   />
                 </div>
               </div>
+
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>
+                  Forms to Assign
+                  {selectedTemplateIds.length > 0 && (
+                    <span style={{ fontWeight: 400, color: '#555', marginLeft: 8 }}>
+                      ({selectedTemplateIds.length} selected)
+                    </span>
+                  )}
+                </label>
+                {templates.length === 0 ? (
+                  <p style={{ fontSize: 13, color: '#888' }}>No published templates available.</p>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {templates.map((t) => (
+                      <label
+                        key={t.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          padding: '8px 12px',
+                          borderRadius: 6,
+                          cursor: 'pointer',
+                          background: selectedTemplateIds.includes(t.id) ? '#dbeafe' : '#fff',
+                          border: `1px solid ${selectedTemplateIds.includes(t.id) ? '#3b82f6' : '#ddd'}`,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedTemplateIds.includes(t.id)}
+                          onChange={() => toggleTemplate(t.id)}
+                          style={{ width: 16, height: 16 }}
+                        />
+                        <span>{t.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <button
                 onClick={handleAssign}
-                disabled={assigning || !selectedTemplateId}
+                disabled={assigning || selectedTemplateIds.length === 0}
                 className="btn"
               >
-                {assigning ? 'Creating...' : 'Create Assignment Link'}
+                {assigning
+                  ? 'Creating...'
+                  : `Create ${selectedTemplateIds.length > 1 ? `${selectedTemplateIds.length} Assignment Links` : 'Assignment Link'}`}
               </button>
             </div>
           )}
 
-          {createdAssignment && (
-            <div style={{ marginTop: 16, padding: 16, background: '#fff', borderRadius: 8, border: '1px solid #b3d4f7' }}>
-              <p style={{ fontWeight: 600, marginBottom: 8 }}>
-                Form assigned: <em>{createdAssignment.template_name}</em>
+          {createdAssignments.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <p style={{ fontWeight: 600, marginBottom: 12 }}>
+                {createdAssignments.length === 1 ? 'Assignment created' : `${createdAssignments.length} assignments created`}
               </p>
-
-              <div style={{ marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={() => copyLink(createdAssignment.fill_url)} style={{ whiteSpace: 'nowrap' }}>
-                  {copiedLink ? 'Copied!' : 'Copy Link'}
-                </button>
-                <button
-                  className="secondary"
-                  style={{ whiteSpace: 'nowrap' }}
-                  onClick={() => setShowQr((v) => !v)}
-                >
-                  {showQr ? 'Hide QR Code' : 'Show QR Code'}
-                </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {createdAssignments.map((a) => (
+                  <div key={a.id} style={{ padding: 16, background: '#fff', borderRadius: 8, border: '1px solid #b3d4f7' }}>
+                    <p style={{ fontWeight: 600, marginBottom: 4 }}>{a.template_name}</p>
+                    <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+                      Expires: {new Date(a.expires_at).toLocaleDateString()}
+                    </p>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button onClick={() => copyLink(a.id, a.fill_url)} style={{ whiteSpace: 'nowrap' }}>
+                        {copiedLinkId === a.id ? 'Copied!' : 'Copy Link'}
+                      </button>
+                      <button className="secondary" style={{ whiteSpace: 'nowrap' }} onClick={() => setShowQrId(showQrId === a.id ? null : a.id)}>
+                        {showQrId === a.id ? 'Hide QR' : 'Show QR'}
+                      </button>
+                    </div>
+                    {showQrId === a.id && (
+                      <img src={a.qr_code_data_url} alt="QR code" style={{ marginTop: 12, border: '1px solid #ddd', borderRadius: 4, display: 'block' }} />
+                    )}
+                  </div>
+                ))}
               </div>
-
-              {showQr && (
-                <div style={{ marginBottom: 16 }}>
-                  <img
-                    src={createdAssignment.qr_code_data_url}
-                    alt="QR code for form link"
-                    style={{ border: '1px solid #ddd', borderRadius: 4, display: 'block' }}
-                  />
-                </div>
-              )}
-
-              <div>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Send via SMS</label>
+              <div style={{ marginTop: 12 }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Send all via SMS</label>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <input
                     type="tel"
@@ -735,11 +782,8 @@ export function StaffPatientDetailPage({ token }: Props) {
                     onChange={(e) => setSmsPhone(e.target.value)}
                     style={{ width: 180 }}
                   />
-                  <button
-                    onClick={() => handleSendSms(createdAssignment.id)}
-                    disabled={smsSending || !smsPhone}
-                  >
-                    {smsSending ? 'Sending...' : 'Send SMS'}
+                  <button onClick={handleSendSmsAll} disabled={smsSending || !smsPhone}>
+                    {smsSending ? 'Sending...' : `Send ${createdAssignments.length > 1 ? 'All' : ''} SMS`}
                   </button>
                 </div>
                 {smsResult && (
@@ -747,14 +791,7 @@ export function StaffPatientDetailPage({ token }: Props) {
                     {smsResult}
                   </p>
                 )}
-                <p style={{ fontSize: 12, color: '#888', marginTop: 4 }}>
-                  Requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER to be configured.
-                </p>
               </div>
-
-              <p style={{ fontSize: 12, color: '#888', marginTop: 12 }}>
-                Expires: {new Date(createdAssignment.expires_at).toLocaleDateString()}
-              </p>
             </div>
           )}
 
@@ -799,7 +836,7 @@ export function StaffPatientDetailPage({ token }: Props) {
                                 `/api/staff/assignments/${a.id}/link`,
                                 { headers: authHeader(token) },
                               );
-                              setCreatedAssignment({
+                              setCreatedAssignments([{
                                 id: a.id,
                                 token: a.token,
                                 fill_url: result.fill_url,
@@ -807,8 +844,8 @@ export function StaffPatientDetailPage({ token }: Props) {
                                 patient_name: `${detail?.patient?.child_first_name ?? ''} ${detail?.patient?.child_last_name ?? ''}`,
                                 template_name: a.template_name,
                                 expires_at: a.expires_at,
-                              });
-                              setShowQr(false);
+                              }]);
+                              setShowQrId(null);
                             }}
                           >
                             View Link
