@@ -16,10 +16,12 @@ import { db, nowIso } from '../db/database.js';
 
 export const staffAssignmentsRouter = Router();
 
+const expiresInDaysField = z.number().int().min(1).max(90).catch(7).optional();
+
 const byPatientIdSchema = z.object({
   patient_id: z.string().uuid(),
   template_id: z.string().uuid(),
-  expires_in_days: z.number().int().min(1).max(90).optional(),
+  expires_in_days: expiresInDaysField,
 });
 
 const byNameDobSchema = z.object({
@@ -27,7 +29,7 @@ const byNameDobSchema = z.object({
   last_name: z.string().min(1).trim(),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'DOB must be YYYY-MM-DD'),
   template_id: z.string().uuid(),
-  expires_in_days: z.number().int().min(1).max(90).optional(),
+  expires_in_days: expiresInDaysField,
 });
 
 staffAssignmentsRouter.post('/', async (req, res) => {
@@ -57,7 +59,7 @@ staffAssignmentsRouter.post('/', async (req, res) => {
   } else {
     const byName = byNameDobSchema.safeParse(req.body);
     if (!byName.success) {
-      fail(res, 'VALIDATION_ERROR', 'Provide either patient_id or first_name + last_name + dob', 422);
+      fail(res, 'VALIDATION_ERROR', 'Provide either patient_id or first_name + last_name + dob', 422, byName.error.flatten());
       return;
     }
 

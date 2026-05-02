@@ -106,7 +106,7 @@ export function StaffAssignmentsPage({ token }: Props) {
           last_name: lastName.trim(),
           dob,
           template_id: selectedTemplateId,
-          expires_in_days: expiresInDays,
+          expires_in_days: expiresInDays >= 1 ? expiresInDays : 7,
         }),
       });
       setCreatedAssignment(result);
