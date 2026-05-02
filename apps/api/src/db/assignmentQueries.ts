@@ -108,6 +108,13 @@ export function completeAssignmentBySubmissionId(submissionId: string): void {
   ).run(nowIso(), submissionId);
 }
 
+export function deleteAssignment(id: string, practiceId: string): boolean {
+  const result = db
+    .prepare('delete from form_assignments where id = ? and practice_id = ?')
+    .run(id, practiceId);
+  return result.changes > 0;
+}
+
 export function expireStaleAssignments(): number {
   // Use datetime() to parse the ISO-8601 stored value before comparing — SQLite's
   // datetime('now') uses a space separator while toISOString() uses 'T', so a raw

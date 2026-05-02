@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api, authHeader } from '../lib/api';
 
@@ -18,7 +18,10 @@ type Submission = {
   child_last_name: string | null;
   child_dob: string | null;
   patient_id: string | null;
+  template_name: string | null;
 };
+
+const STATUS_OPTIONS = ['all', 'in_progress', 'completed', 'exported'];
 
 export function StaffSubmissionsPage({ token }: Props) {
   const navigate = useNavigate();
@@ -26,6 +29,8 @@ export function StaffSubmissionsPage({ token }: Props) {
   const [error, setError] = useState('');
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [viewingId, setViewingId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
 
   useEffect(() => {
     if (!token) {
@@ -36,6 +41,22 @@ export function StaffSubmissionsPage({ token }: Props) {
       .then(setSubmissions)
       .catch((e) => setError((e as Error).message));
   }, [token, navigate]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return submissions.filter((s) => {
+      if (statusFilter !== 'all' && s.status !== statusFilter) return false;
+      if (!q) return true;
+      const name = `${s.child_first_name ?? ''} ${s.child_last_name ?? ''}`.toLowerCase();
+      return (
+        name.includes(q) ||
+        (s.template_name ?? '').toLowerCase().includes(q) ||
+        s.confirmation_code.toLowerCase().includes(q) ||
+        s.status.toLowerCase().includes(q) ||
+        (s.child_dob ?? '').includes(q)
+      );
+    });
+  }, [submissions, search, statusFilter]);
 
   async function fetchSubmissionPdfBlob(submissionId: string, fallbackMessage: string) {
     const response = await fetch(`${API_BASE}/api/staff/submissions/${submissionId}/pdf`, {
@@ -115,10 +136,43 @@ export function StaffSubmissionsPage({ token }: Props) {
         <h2>All Submissions</h2>
         <p>Every form submitted by parents. Download the filled PDF or view the full patient record.</p>
         {error ? <div className="error">{error}</div> : null}
+
+        <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            type="search"
+            placeholder="Search by patient, form, confirmation code…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 220 }}
+          />
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            style={{ width: 160 }}
+          >
+            {STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>{s === 'all' ? 'All statuses' : s}</option>
+            ))}
+          </select>
+          {(search || statusFilter !== 'all') && (
+            <button
+              className="secondary"
+              style={{ whiteSpace: 'nowrap', width: 'auto', padding: '6px 14px' }}
+              onClick={() => { setSearch(''); setStatusFilter('all'); }}
+            >
+              Clear filters
+            </button>
+          )}
+          <span style={{ fontSize: 13, color: '#6b7280', whiteSpace: 'nowrap' }}>
+            {filtered.length} of {submissions.length}
+          </span>
+        </div>
+
         <table className="table">
           <thead>
             <tr>
               <th>Patient</th>
+              <th>Form</th>
               <th>DOB</th>
               <th>Status</th>
               <th>Confirmation</th>
@@ -127,12 +181,13 @@ export function StaffSubmissionsPage({ token }: Props) {
             </tr>
           </thead>
           <tbody>
-            {submissions.map((s) => {
+            {filtered.map((s) => {
               const childName = `${s.child_first_name ?? ''} ${s.child_last_name ?? ''}`.trim();
               const isCompleted = s.status === 'completed' || s.status === 'exported';
               return (
                 <tr key={s.id}>
                   <td>{childName || <em style={{ color: '#9ca3af' }}>Unknown</em>}</td>
+                  <td>{s.template_name ?? <em style={{ color: '#9ca3af' }}>—</em>}</td>
                   <td>{s.child_dob ?? '—'}</td>
                   <td>
                     <span style={{
@@ -176,8 +231,10 @@ export function StaffSubmissionsPage({ token }: Props) {
                 </tr>
               );
             })}
-            {submissions.length === 0 ? (
-              <tr><td colSpan={6} style={{ textAlign: 'center', color: '#6b7280' }}>No submissions yet.</td></tr>
+            {filtered.length === 0 ? (
+              <tr><td colSpan={7} style={{ textAlign: 'center', color: '#6b7280' }}>
+                {submissions.length === 0 ? 'No submissions yet.' : 'No submissions match your search.'}
+              </td></tr>
             ) : null}
           </tbody>
         </table>

@@ -27,6 +27,7 @@ export function AppNav({ staffToken, parentToken, onLogout, appMode }: Props) {
           {staffToken && !isPatientOnly ? (
             <>
               <Link to="/staff/patients">Patients</Link>
+              <Link to="/staff/assignments">Assignments</Link>
               <Link to="/staff/submissions">Submissions</Link>
               <Link to="/staff/templates">Templates</Link>
               <a href="#logout" onClick={(e) => { e.preventDefault(); onLogout?.(); }}>Logout</a>

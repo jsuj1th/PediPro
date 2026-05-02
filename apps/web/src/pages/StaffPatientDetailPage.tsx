@@ -233,6 +233,7 @@ export function StaffPatientDetailPage({ token }: Props) {
   const [smsSending, setSmsSending] = useState(false);
   const [smsResult, setSmsResult] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
+  const [showQr, setShowQr] = useState(false);
 
   async function loadAssignments() {
     if (!token) return;
@@ -272,11 +273,27 @@ export function StaffPatientDetailPage({ token }: Props) {
       });
       setCreatedAssignment(result);
       setShowAssignForm(false);
+      setShowQr(false);
       await loadAssignments();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setAssigning(false);
+    }
+  }
+
+  async function handleDeleteAssignment(assignmentId: string) {
+    if (!token) return;
+    if (!window.confirm('Delete this form assignment? This cannot be undone.')) return;
+    try {
+      await api(`/api/staff/assignments/${assignmentId}`, {
+        method: 'DELETE',
+        headers: authHeader(token),
+      });
+      if (createdAssignment?.id === assignmentId) setCreatedAssignment(null);
+      await loadAssignments();
+    } catch (e) {
+      setError((e as Error).message);
     }
   }
 
@@ -685,28 +702,28 @@ export function StaffPatientDetailPage({ token }: Props) {
                 Form assigned: <em>{createdAssignment.template_name}</em>
               </p>
 
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Patient Fill Link</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    readOnly
-                    value={createdAssignment.fill_url}
-                    style={{ flex: 1, fontFamily: 'monospace', fontSize: 13 }}
-                  />
-                  <button onClick={() => copyLink(createdAssignment.fill_url)} style={{ whiteSpace: 'nowrap' }}>
-                    {copiedLink ? 'Copied!' : 'Copy Link'}
-                  </button>
-                </div>
+              <div style={{ marginBottom: 16, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={() => copyLink(createdAssignment.fill_url)} style={{ whiteSpace: 'nowrap' }}>
+                  {copiedLink ? 'Copied!' : 'Copy Link'}
+                </button>
+                <button
+                  className="secondary"
+                  style={{ whiteSpace: 'nowrap' }}
+                  onClick={() => setShowQr((v) => !v)}
+                >
+                  {showQr ? 'Hide QR Code' : 'Show QR Code'}
+                </button>
               </div>
 
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>QR Code</label>
-                <img
-                  src={createdAssignment.qr_code_data_url}
-                  alt="QR code for form link"
-                  style={{ border: '1px solid #ddd', borderRadius: 4 }}
-                />
-              </div>
+              {showQr && (
+                <div style={{ marginBottom: 16 }}>
+                  <img
+                    src={createdAssignment.qr_code_data_url}
+                    alt="QR code for form link"
+                    style={{ border: '1px solid #ddd', borderRadius: 4, display: 'block' }}
+                  />
+                </div>
+              )}
 
               <div>
                 <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Send via SMS</label>
@@ -771,7 +788,7 @@ export function StaffPatientDetailPage({ token }: Props) {
                       </td>
                       <td>{a.assigned_by_email}</td>
                       <td>{new Date(a.expires_at).toLocaleDateString()}</td>
-                      <td>
+                      <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                         {(a.status === 'pending' || a.status === 'in_progress') && (
                           <button
                             className="secondary"
@@ -791,11 +808,19 @@ export function StaffPatientDetailPage({ token }: Props) {
                                 template_name: a.template_name,
                                 expires_at: a.expires_at,
                               });
+                              setShowQr(false);
                             }}
                           >
                             View Link
                           </button>
                         )}
+                        <button
+                          className="secondary"
+                          style={{ fontSize: 12, padding: '2px 8px', color: '#c00', borderColor: '#c00' }}
+                          onClick={() => handleDeleteAssignment(a.id)}
+                        >
+                          Delete
+                        </button>
                       </td>
                     </tr>
                   ))}

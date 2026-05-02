@@ -15,6 +15,7 @@ import { ParentStartPage } from './pages/ParentStartPage';
 import { StaffLoginPage } from './pages/StaffLoginPage';
 import { StaffPatientDetailPage } from './pages/StaffPatientDetailPage';
 import { StaffPatientsPage } from './pages/StaffPatientsPage';
+import { StaffAssignmentsPage } from './pages/StaffAssignmentsPage';
 import { StaffSubmissionsPage } from './pages/StaffSubmissionsPage';
 import { StaffTemplateEditorPage } from './pages/StaffTemplateEditorPage';
 import { StaffTemplatesPage } from './pages/StaffTemplatesPage';
@@ -85,6 +86,7 @@ export function App() {
           <>
             <Route path="/staff/login" element={<StaffLoginPage onAuthenticated={onStaffAuth} />} />
             <Route path="/staff/patients" element={<StaffPatientsPage token={staffToken} />} />
+            <Route path="/staff/assignments" element={<StaffAssignmentsPage token={staffToken} />} />
             <Route path="/staff/submissions" element={<StaffSubmissionsPage token={staffToken} />} />
             <Route path="/staff/patients/:id" element={<StaffPatientDetailPage token={staffToken} />} />
             <Route path="/staff/templates" element={<StaffTemplatesPage token={staffToken} />} />

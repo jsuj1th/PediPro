@@ -567,9 +567,11 @@ export function listSubmissions(practiceId: string): Array<Record<string, unknow
   return db
     .prepare(
       `select s.id, s.status, s.submitted_at, s.updated_at, s.confirmation_code,
-              p.child_first_name, p.child_last_name, p.child_dob, p.id as patient_id
+              p.child_first_name, p.child_last_name, p.child_dob, p.id as patient_id,
+              t.name as template_name
        from submissions s
        left join patients p on p.id = s.patient_id
+       left join pdf_templates t on t.id = s.template_id
        where s.practice_id = ?
        order by s.created_at desc`,
     )
