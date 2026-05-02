@@ -48,6 +48,8 @@ jobs:
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            pm2 stop pediform-api || true
+            rm -rf /var/app/dist /var/app/node_modules
             mkdir -p /var/app
             tar -xzf /home/ec2-user/pediform-api.tar.gz -C /var/app
             rm /home/ec2-user/pediform-api.tar.gz
