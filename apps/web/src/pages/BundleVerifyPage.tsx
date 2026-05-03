@@ -114,24 +114,25 @@ export function BundleVerifyPage() {
                   justifyContent: 'space-between',
                   alignItems: 'center',
                   padding: '16px',
-                  background: '#f8faff',
+                  background: a.status === 'completed' ? '#f0faf0' : '#f8faff',
                   borderRadius: 8,
                   border: `1px solid ${a.status === 'completed' ? '#b7ddb7' : '#dde'}`,
+                  minHeight: 64,
                 }}
               >
-                <div>
-                  <p style={{ fontWeight: 600, margin: 0 }}>{a.template_name}</p>
-                  {a.status === 'completed' && (
-                    <p style={{ fontSize: 12, color: '#0a6', margin: '4px 0 0' }}>Completed</p>
+                <p style={{ fontWeight: 600, margin: 0, flex: 1, paddingRight: 16 }}>{a.template_name}</p>
+                <div style={{ flexShrink: 0, width: 100, textAlign: 'right' }}>
+                  {a.status !== 'completed' ? (
+                    <button
+                      onClick={() => navigate(`/p/${a.practice_slug}/session/${a.session_id}/pdf-form`)}
+                      style={{ width: '100%' }}
+                    >
+                      Fill Form
+                    </button>
+                  ) : (
+                    <span style={{ fontSize: 13, color: '#1a8a1a', fontWeight: 600 }}>✓ Completed</span>
                   )}
                 </div>
-                {a.status !== 'completed' ? (
-                  <button onClick={() => navigate(`/p/${a.practice_slug}/session/${a.session_id}/pdf-form`)}>
-                    Fill Form
-                  </button>
-                ) : (
-                  <span style={{ fontSize: 13, color: '#0a6', fontWeight: 600 }}>Done</span>
-                )}
               </div>
             ))}
           </div>
