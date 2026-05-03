@@ -13,6 +13,9 @@ coverage
 data/*
 PROGRESS.md
 memory/
+
+*.pem
+
 # Logs
 logs
 *.log

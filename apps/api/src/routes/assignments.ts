@@ -3,11 +3,155 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { ok, fail } from '../lib/response.js';
 import { getAssignmentByToken, updateAssignment } from '../db/assignmentQueries.js';
+import { getBundleByToken, getAssignmentsForBundle } from '../db/bundleQueries.js';
 import { createSubmission, addSubmissionEvent, findPracticeById } from '../db/queries.js';
 import { getTemplateWithFields } from '../db/templateQueries.js';
 import { db } from '../db/database.js';
 
 export const assignmentsRouter = Router();
+
+const verifySchema = z.object({
+  first_name: z.string().min(1),
+  last_name: z.string().min(1),
+  dob: z.string().min(1),
+});
+
+// GET /api/assignments/bundle/:token
+assignmentsRouter.get('/bundle/:token', (req, res) => {
+  const bundle = getBundleByToken(req.params.token);
+  if (!bundle) {
+    fail(res, 'NOT_FOUND', 'Bundle link not found', 404);
+    return;
+  }
+  if (new Date(bundle.expires_at) < new Date()) {
+    fail(res, 'BUNDLE_EXPIRED', 'This form bundle has expired', 410);
+    return;
+  }
+  const assignments = getAssignmentsForBundle(bundle.id);
+  const patient = db
+    .prepare('select child_first_name from patients where id = ?')
+    .get(bundle.patient_id) as { child_first_name: string } | undefined;
+  ok(res, {
+    patient_first_name: patient?.child_first_name ?? 'Patient',
+    forms: assignments.map((a) => ({ id: a.id, template_name: a.template_name, status: a.status })),
+    expires_at: bundle.expires_at,
+  });
+});
+
+// POST /api/assignments/bundle/:token/verify
+assignmentsRouter.post('/bundle/:token/verify', (req, res) => {
+  const parsed = verifySchema.safeParse(req.body);
+  if (!parsed.success) {
+    fail(res, 'VALIDATION_ERROR', 'first_name, last_name, and dob are required', 422);
+    return;
+  }
+
+  const bundle = getBundleByToken(req.params.token);
+  if (!bundle) {
+    fail(res, 'NOT_FOUND', 'Bundle link not found', 404);
+    return;
+  }
+  if (new Date(bundle.expires_at) < new Date()) {
+    fail(res, 'BUNDLE_EXPIRED', 'This form bundle has expired', 410);
+    return;
+  }
+
+  const patient = db
+    .prepare('select * from patients where id = ?')
+    .get(bundle.patient_id) as Record<string, string> | undefined;
+  if (!patient) {
+    fail(res, 'NOT_FOUND', 'Patient record not found', 404);
+    return;
+  }
+
+  const normalize = (s: string) => s.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (
+    normalize(parsed.data.first_name) !== normalize(patient.child_first_name) ||
+    normalize(parsed.data.last_name) !== normalize(patient.child_last_name) ||
+    parsed.data.dob !== patient.child_dob
+  ) {
+    fail(res, 'IDENTITY_MISMATCH', 'Name or date of birth does not match our records', 403);
+    return;
+  }
+
+  const practice = findPracticeById(bundle.practice_id);
+  if (!practice) {
+    fail(res, 'NOT_FOUND', 'Practice not found', 404);
+    return;
+  }
+
+  const bundleAssignments = getAssignmentsForBundle(bundle.id);
+
+  const results = bundleAssignments.map((assignment) => {
+    if (assignment.submission_id) {
+      const existing = db
+        .prepare('select id, status from submissions where id = ?')
+        .get(assignment.submission_id) as { id: string; status: string } | undefined;
+      if (existing && (existing.status === 'in_progress' || existing.status === 'completed')) {
+        return {
+          assignment_id: assignment.id,
+          template_name: assignment.template_name,
+          session_id: existing.id,
+          practice_slug: practice.slug,
+          template_id: assignment.template_id,
+          status: existing.status,
+        };
+      }
+    }
+
+    let template: Record<string, unknown>;
+    try {
+      template = getTemplateWithFields(assignment.template_id, bundle.practice_id) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+
+    const confirmationCode = `FA-${randomBytes(3).toString('hex').toUpperCase()}`;
+    const submission = createSubmission({
+      practiceId: bundle.practice_id,
+      patientId: bundle.patient_id,
+      visitType: patient.visit_type ?? 'new_patient',
+      formId: String(template.template_key),
+      templateVersion: `${String(template.template_key)}@v${String(template.version)}`,
+      templateId: String(template.id),
+      templateVersionNum: Number(template.version),
+      initialData: {
+        patient: {
+          child: {
+            first_name: patient.child_first_name,
+            last_name: patient.child_last_name,
+            dob: patient.child_dob,
+          },
+        },
+        visit_type: patient.visit_type,
+        template_key: String(template.template_key),
+      },
+      confirmationCode,
+      ipAddress: req.ip,
+    });
+
+    addSubmissionEvent({
+      submissionId: submission.id,
+      practiceId: bundle.practice_id,
+      actorType: 'system',
+      eventType: 'bundle_verified',
+      payload: { bundle_id: bundle.id, assignment_id: assignment.id },
+    });
+
+    updateAssignment(assignment.id, { status: 'in_progress', submissionId: submission.id });
+
+    return {
+      assignment_id: assignment.id,
+      template_name: assignment.template_name,
+      session_id: submission.id,
+      practice_slug: String(practice.slug),
+      template_id: String(template.id),
+      status: 'in_progress',
+    };
+  });
+
+  ok(res, { assignments: results.filter(Boolean) });
+});
 
 // GET /api/assignments/:token — check assignment status and return enough info to
 // show the verify page without leaking the patient's full identity.
@@ -46,12 +190,6 @@ assignmentsRouter.get('/:token', (req, res) => {
     expires_at: assignment.expires_at,
     status: assignment.status,
   });
-});
-
-const verifySchema = z.object({
-  first_name: z.string().min(1),
-  last_name: z.string().min(1),
-  dob: z.string().min(1),
 });
 
 // POST /api/assignments/:token/verify — verify patient identity, then create a

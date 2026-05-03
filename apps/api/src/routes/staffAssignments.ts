@@ -5,13 +5,13 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { ok, fail } from '../lib/response.js';
 import {
-  createAssignment,
   getAssignmentById,
   listAssignmentsForPractice,
   listAssignmentsForPatient,
   expireStaleAssignments,
   deleteAssignment,
 } from '../db/assignmentQueries.js';
+import { createBundleWithAssignments } from '../db/bundleQueries.js';
 import { db, nowIso } from '../db/database.js';
 
 export const staffAssignmentsRouter = Router();
@@ -20,7 +20,7 @@ const expiresInDaysField = z.number().int().min(1).max(90).catch(7).optional();
 
 const byPatientIdSchema = z.object({
   patient_id: z.string().uuid(),
-  template_id: z.string().uuid(),
+  template_ids: z.array(z.string().uuid()).min(1),
   expires_in_days: expiresInDaysField,
 });
 
@@ -28,17 +28,16 @@ const byNameDobSchema = z.object({
   first_name: z.string().min(1).trim(),
   last_name: z.string().min(1).trim(),
   dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'DOB must be YYYY-MM-DD'),
-  template_id: z.string().uuid(),
+  template_ids: z.array(z.string().uuid()).min(1),
   expires_in_days: expiresInDaysField,
 });
 
 staffAssignmentsRouter.post('/', async (req, res) => {
   const auth = req.user as { id: string; practiceId: string };
 
-  // Resolve patient — either by existing patient_id or by name+DOB (find or create)
   let patientId: string;
   let patientName: string;
-  let templateId: string;
+  let templateIds: string[];
   let expiresInDays: number | undefined;
 
   const byId = byPatientIdSchema.safeParse(req.body);
@@ -48,26 +47,21 @@ staffAssignmentsRouter.post('/', async (req, res) => {
       .get(byId.data.patient_id, auth.practiceId) as
       | { id: string; child_first_name: string; child_last_name: string }
       | undefined;
-    if (!existing) {
-      fail(res, 'NOT_FOUND', 'Patient not found', 404);
-      return;
-    }
+    if (!existing) { fail(res, 'NOT_FOUND', 'Patient not found', 404); return; }
     patientId = existing.id;
     patientName = `${existing.child_first_name} ${existing.child_last_name}`;
-    templateId = byId.data.template_id;
+    templateIds = byId.data.template_ids;
     expiresInDays = byId.data.expires_in_days;
   } else {
     const byName = byNameDobSchema.safeParse(req.body);
     if (!byName.success) {
-      fail(res, 'VALIDATION_ERROR', 'Provide either patient_id or first_name + last_name + dob', 422, byName.error.flatten());
+      fail(res, 'VALIDATION_ERROR', 'Provide patient_id or first_name + last_name + dob, plus template_ids array', 422, byName.error.flatten());
       return;
     }
-
     const { first_name, last_name, dob } = byName.data;
-    templateId = byName.data.template_id;
+    templateIds = byName.data.template_ids;
     expiresInDays = byName.data.expires_in_days;
 
-    // Try to find existing patient by name+DOB in this practice
     const found = db
       .prepare(
         `select id from patients
@@ -81,7 +75,6 @@ staffAssignmentsRouter.post('/', async (req, res) => {
     if (found) {
       patientId = found.id;
     } else {
-      // Create a minimal patient record
       const now = nowIso();
       patientId = randomUUID();
       db.prepare(
@@ -91,37 +84,40 @@ staffAssignmentsRouter.post('/', async (req, res) => {
          values (?, ?, null, ?, ?, ?, '', null, null, null, ?, ?)`,
       ).run(patientId, auth.practiceId, first_name, last_name, dob, now, now);
     }
-
     patientName = `${first_name} ${last_name}`;
   }
 
-  // Verify template belongs to this practice and is published
-  const template = db
-    .prepare(`select id, name, template_key from pdf_templates where id = ? and practice_id = ? and status = 'published'`)
-    .get(templateId, auth.practiceId) as { id: string; name: string; template_key: string } | undefined;
-
-  if (!template) {
-    fail(res, 'NOT_FOUND', 'Published template not found', 404);
+  // Verify all templates belong to this practice and are published
+  const templates = templateIds.map((tid) => {
+    const t = db
+      .prepare(`select id, name from pdf_templates where id = ? and practice_id = ? and status = 'published'`)
+      .get(tid, auth.practiceId) as { id: string; name: string } | undefined;
+    return t;
+  });
+  if (templates.some((t) => !t)) {
+    fail(res, 'NOT_FOUND', 'One or more templates not found or not published', 404);
     return;
   }
 
-  const assignment = createAssignment({
+  const { bundle } = createBundleWithAssignments({
     practiceId: auth.practiceId,
     patientId,
-    templateId,
     assignedBy: auth.id,
+    templateIds,
     expiresInDays,
   });
 
-  const fillUrl = `${config.frontendUrl}/fill/${assignment.token}`;
+  const fillUrl = `${config.frontendUrl}/fill/bundle/${bundle.token}`;
   const qrCodeDataUrl = await QRCode.toDataURL(fillUrl, { width: 300, margin: 2 });
 
   ok(res, {
-    ...assignment,
+    bundle_id: bundle.id,
+    bundle_token: bundle.token,
     patient_name: patientName,
-    template_name: template.name,
+    template_names: (templates as Array<{ id: string; name: string }>).map((t) => t.name),
     fill_url: fillUrl,
     qr_code_data_url: qrCodeDataUrl,
+    expires_at: bundle.expires_at,
   });
 });
 
@@ -148,10 +144,22 @@ staffAssignmentsRouter.get('/:id/link', async (req, res) => {
     return;
   }
 
+  const row = assignment as typeof assignment & { bundle_id?: string };
+  if (row.bundle_id) {
+    const bundle = db
+      .prepare('select id, token from assignment_bundles where id = ?')
+      .get(row.bundle_id) as { id: string; token: string } | undefined;
+    if (bundle) {
+      const fillUrl = `${config.frontendUrl}/fill/bundle/${bundle.token}`;
+      const qrCodeDataUrl = await QRCode.toDataURL(fillUrl, { width: 300, margin: 2 });
+      ok(res, { fill_url: fillUrl, qr_code_data_url: qrCodeDataUrl, bundle_id: bundle.id });
+      return;
+    }
+  }
+
   const fillUrl = `${config.frontendUrl}/fill/${assignment.token}`;
   const qrCodeDataUrl = await QRCode.toDataURL(fillUrl, { width: 300, margin: 2 });
-
-  ok(res, { fill_url: fillUrl, qr_code_data_url: qrCodeDataUrl });
+  ok(res, { fill_url: fillUrl, qr_code_data_url: qrCodeDataUrl, bundle_id: null });
 });
 
 const smsSchema = z.object({
@@ -166,6 +174,74 @@ staffAssignmentsRouter.delete('/:id', (req, res) => {
     return;
   }
   ok(res, { deleted: true });
+});
+
+staffAssignmentsRouter.post('/bundle/:bundleId/send-sms', async (req, res) => {
+  const parsed = smsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    fail(res, 'VALIDATION_ERROR', 'Phone number required', 422);
+    return;
+  }
+
+  const auth = req.user as { practiceId: string };
+  const bundle = db
+    .prepare('select * from assignment_bundles where id = ? and practice_id = ?')
+    .get(req.params.bundleId, auth.practiceId) as
+    | { id: string; practice_id: string; patient_id: string; token: string; expires_at: string }
+    | undefined;
+
+  if (!bundle) {
+    fail(res, 'NOT_FOUND', 'Bundle not found', 404);
+    return;
+  }
+
+  if (new Date(bundle.expires_at) < new Date()) {
+    fail(res, 'BUNDLE_EXPIRED', 'This bundle has expired', 400);
+    return;
+  }
+
+  if (!config.twilio.accountSid || !config.twilio.authToken || !config.twilio.fromNumber) {
+    fail(res, 'SMS_NOT_CONFIGURED', 'SMS sending is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_FROM_NUMBER.', 503);
+    return;
+  }
+
+  const fillUrl = `${config.frontendUrl}/fill/bundle/${bundle.token}`;
+  const patient = db
+    .prepare('select child_first_name from patients where id = ?')
+    .get(bundle.patient_id) as { child_first_name: string } | undefined;
+
+  const firstName = patient?.child_first_name ?? 'your child';
+  const formCount = (db
+    .prepare('select count(*) as n from form_assignments where bundle_id = ?')
+    .get(bundle.id) as { n: number }).n;
+  const message = `Your medical form${formCount > 1 ? 's' : ''} for ${firstName} ${formCount > 1 ? 'are' : 'is'} ready to complete. Please visit: ${fillUrl}`;
+
+  const credentials = Buffer.from(`${config.twilio.accountSid}:${config.twilio.authToken}`).toString('base64');
+  const body = new URLSearchParams({
+    To: parsed.data.phone,
+    From: config.twilio.fromNumber,
+    Body: message,
+  });
+
+  const twilioRes = await fetch(
+    `https://api.twilio.com/2010-04-01/Accounts/${config.twilio.accountSid}/Messages.json`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${credentials}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: body.toString(),
+    },
+  );
+
+  if (!twilioRes.ok) {
+    const errBody = await twilioRes.json().catch(() => ({})) as Record<string, unknown>;
+    fail(res, 'SMS_SEND_FAILED', String(errBody.message ?? 'Failed to send SMS'), 500);
+    return;
+  }
+
+  ok(res, { sent: true, to: parsed.data.phone });
 });
 
 staffAssignmentsRouter.post('/:id/send-sms', async (req, res) => {

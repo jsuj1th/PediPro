@@ -321,15 +321,39 @@ export function runMigrations(): void {
     create index if not exists idx_pdf_templates_practice_key_status on pdf_templates(practice_id, template_key, status);
     create index if not exists idx_pdf_template_fields_template_section_order on pdf_template_fields(template_id, section_key, display_order);
     create index if not exists idx_field_groups_template on field_groups(template_id);
+    create table if not exists assignment_bundles (
+      id text primary key,
+      practice_id text not null,
+      patient_id text not null,
+      assigned_by text not null,
+      token text not null unique,
+      expires_at text not null,
+      created_at text not null,
+      updated_at text not null,
+      foreign key(practice_id) references practices(id),
+      foreign key(patient_id) references patients(id),
+      foreign key(assigned_by) references staff_users(id)
+    );
+
     create index if not exists idx_form_assignments_token on form_assignments(token);
     create index if not exists idx_form_assignments_patient on form_assignments(patient_id);
     create index if not exists idx_form_assignments_practice_status on form_assignments(practice_id, status);
+    create index if not exists idx_assignment_bundles_token on assignment_bundles(token);
   `);
 
+  ensureBundleColumns();
   ensureSubmissionColumns();
   ensureFieldColumns();
   migrateSubmissionsCheckConstraint();
   normalizeTemplatePaths();
+}
+
+function ensureBundleColumns(): void {
+  try {
+    db.exec(`alter table form_assignments add column bundle_id text references assignment_bundles(id)`);
+  } catch {
+    // column already exists
+  }
 }
 
 function migrateSubmissionsCheckConstraint(): void {

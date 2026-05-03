@@ -195,13 +195,13 @@ type PublishedTemplate = {
   template_key: string;
 };
 
-type CreatedAssignment = {
-  id: string;
-  token: string;
+type BundleResult = {
+  bundle_id: string | null;
+  bundle_token: string;
+  patient_name: string;
+  template_names: string[];
   fill_url: string;
   qr_code_data_url: string;
-  patient_name: string;
-  template_name: string;
   expires_at: string;
 };
 
@@ -228,7 +228,7 @@ export function StaffPatientDetailPage({ token }: Props) {
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
   const [expiresInDays, setExpiresInDays] = useState(7);
   const [assigning, setAssigning] = useState(false);
-  const [createdAssignments, setCreatedAssignments] = useState<CreatedAssignment[]>([]);
+  const [createdBundle, setCreatedBundle] = useState<BundleResult | null>(null);
   const [smsPhone, setSmsPhone] = useState('');
   const [smsSending, setSmsSending] = useState(false);
   const [smsResult, setSmsResult] = useState('');
@@ -273,16 +273,12 @@ export function StaffPatientDetailPage({ token }: Props) {
     setSmsResult('');
     try {
       const days = expiresInDays >= 1 ? expiresInDays : 7;
-      const results = await Promise.all(
-        selectedTemplateIds.map((template_id) =>
-          api<CreatedAssignment>('/api/staff/assignments', {
-            method: 'POST',
-            headers: authHeader(token),
-            body: JSON.stringify({ patient_id: id, template_id, expires_in_days: days }),
-          }),
-        ),
-      );
-      setCreatedAssignments(results);
+      const result = await api<BundleResult>('/api/staff/assignments', {
+        method: 'POST',
+        headers: authHeader(token),
+        body: JSON.stringify({ patient_id: id, template_ids: selectedTemplateIds, expires_in_days: days }),
+      });
+      setCreatedBundle(result);
       setShowAssignForm(false);
       setShowQrId(null);
       setSelectedTemplateIds([]);
@@ -302,28 +298,23 @@ export function StaffPatientDetailPage({ token }: Props) {
         method: 'DELETE',
         headers: authHeader(token),
       });
-      setCreatedAssignments((prev) => prev.filter((a) => a.id !== assignmentId));
       await loadAssignments();
     } catch (e) {
       setError((e as Error).message);
     }
   }
 
-  async function handleSendSmsAll() {
-    if (!token || !smsPhone || createdAssignments.length === 0) return;
+  async function handleSendSms() {
+    if (!token || !smsPhone || !createdBundle?.bundle_id) return;
     setSmsSending(true);
     setSmsResult('');
     try {
-      await Promise.all(
-        createdAssignments.map((a) =>
-          api(`/api/staff/assignments/${a.id}/send-sms`, {
-            method: 'POST',
-            headers: authHeader(token),
-            body: JSON.stringify({ phone: smsPhone }),
-          }),
-        ),
-      );
-      setSmsResult(`SMS sent for ${createdAssignments.length} form(s).`);
+      await api(`/api/staff/assignments/bundle/${createdBundle.bundle_id}/send-sms`, {
+        method: 'POST',
+        headers: authHeader(token),
+        body: JSON.stringify({ phone: smsPhone }),
+      });
+      setSmsResult('SMS sent.');
     } catch (e) {
       setSmsResult(`Failed: ${(e as Error).message}`);
     } finally {
@@ -673,7 +664,7 @@ export function StaffPatientDetailPage({ token }: Props) {
         <div className="card" style={{ background: '#f0f7ff', marginBottom: 20, marginTop: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ margin: 0 }}>Assign Forms</h3>
-            <button onClick={() => { setShowAssignForm((v) => !v); setCreatedAssignments([]); }}>
+            <button onClick={() => { setShowAssignForm((v) => !v); setCreatedBundle(null); }}>
               {showAssignForm ? 'Cancel' : '+ Assign Forms'}
             </button>
           </div>
@@ -746,52 +737,48 @@ export function StaffPatientDetailPage({ token }: Props) {
             </div>
           )}
 
-          {createdAssignments.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <p style={{ fontWeight: 600, marginBottom: 12 }}>
-                {createdAssignments.length === 1 ? 'Assignment created' : `${createdAssignments.length} assignments created`}
+          {createdBundle && (
+            <div style={{ marginTop: 16, padding: 16, background: '#fff', borderRadius: 8, border: '1px solid #b3d4f7' }}>
+              <p style={{ fontWeight: 600, marginBottom: 4 }}>Bundle created</p>
+              <p style={{ fontSize: 13, color: '#666', marginBottom: 4 }}>
+                Forms: {createdBundle.template_names.join(', ')}
               </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {createdAssignments.map((a) => (
-                  <div key={a.id} style={{ padding: 16, background: '#fff', borderRadius: 8, border: '1px solid #b3d4f7' }}>
-                    <p style={{ fontWeight: 600, marginBottom: 4 }}>{a.template_name}</p>
-                    <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
-                      Expires: {new Date(a.expires_at).toLocaleDateString()}
-                    </p>
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                      <button onClick={() => copyLink(a.id, a.fill_url)} style={{ whiteSpace: 'nowrap' }}>
-                        {copiedLinkId === a.id ? 'Copied!' : 'Copy Link'}
-                      </button>
-                      <button className="secondary" style={{ whiteSpace: 'nowrap' }} onClick={() => setShowQrId(showQrId === a.id ? null : a.id)}>
-                        {showQrId === a.id ? 'Hide QR' : 'Show QR'}
-                      </button>
-                    </div>
-                    {showQrId === a.id && (
-                      <img src={a.qr_code_data_url} alt="QR code" style={{ marginTop: 12, border: '1px solid #ddd', borderRadius: 4, display: 'block' }} />
-                    )}
+              <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+                Expires: {new Date(createdBundle.expires_at).toLocaleDateString()}
+              </p>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                <button onClick={() => copyLink('bundle', createdBundle.fill_url)} style={{ whiteSpace: 'nowrap' }}>
+                  {copiedLinkId === 'bundle' ? 'Copied!' : 'Copy Link'}
+                </button>
+                <button className="secondary" style={{ whiteSpace: 'nowrap' }} onClick={() => setShowQrId(showQrId === 'bundle' ? null : 'bundle')}>
+                  {showQrId === 'bundle' ? 'Hide QR' : 'Show QR'}
+                </button>
+              </div>
+              {showQrId === 'bundle' && (
+                <img src={createdBundle.qr_code_data_url} alt="QR code" style={{ marginBottom: 12, border: '1px solid #ddd', borderRadius: 4, display: 'block' }} />
+              )}
+              {createdBundle.bundle_id && (
+                <div style={{ marginTop: 4 }}>
+                  <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Send via SMS</label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="tel"
+                      placeholder="+15551234567"
+                      value={smsPhone}
+                      onChange={(e) => setSmsPhone(e.target.value)}
+                      style={{ width: 180 }}
+                    />
+                    <button onClick={handleSendSms} disabled={smsSending || !smsPhone}>
+                      {smsSending ? 'Sending...' : 'Send SMS'}
+                    </button>
                   </div>
-                ))}
-              </div>
-              <div style={{ marginTop: 12 }}>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Send all via SMS</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    type="tel"
-                    placeholder="+15551234567"
-                    value={smsPhone}
-                    onChange={(e) => setSmsPhone(e.target.value)}
-                    style={{ width: 180 }}
-                  />
-                  <button onClick={handleSendSmsAll} disabled={smsSending || !smsPhone}>
-                    {smsSending ? 'Sending...' : `Send ${createdAssignments.length > 1 ? 'All' : ''} SMS`}
-                  </button>
+                  {smsResult && (
+                    <p style={{ marginTop: 6, fontSize: 13, color: smsResult.startsWith('Failed') ? '#c00' : '#0a0' }}>
+                      {smsResult}
+                    </p>
+                  )}
                 </div>
-                {smsResult && (
-                  <p style={{ marginTop: 6, fontSize: 13, color: smsResult.startsWith('Failed') ? '#c00' : '#0a0' }}>
-                    {smsResult}
-                  </p>
-                )}
-              </div>
+              )}
             </div>
           )}
 
@@ -832,20 +819,24 @@ export function StaffPatientDetailPage({ token }: Props) {
                             style={{ fontSize: 12, padding: '2px 8px' }}
                             onClick={async () => {
                               if (!token) return;
-                              const result = await api<{ fill_url: string; qr_code_data_url: string }>(
-                                `/api/staff/assignments/${a.id}/link`,
-                                { headers: authHeader(token) },
-                              );
-                              setCreatedAssignments([{
-                                id: a.id,
-                                token: a.token,
-                                fill_url: result.fill_url,
-                                qr_code_data_url: result.qr_code_data_url,
-                                patient_name: `${detail?.patient?.child_first_name ?? ''} ${detail?.patient?.child_last_name ?? ''}`,
-                                template_name: a.template_name,
-                                expires_at: a.expires_at,
-                              }]);
-                              setShowQrId(null);
+                              try {
+                                const result = await api<{ fill_url: string; qr_code_data_url: string; bundle_id: string | null }>(
+                                  `/api/staff/assignments/${a.id}/link`,
+                                  { headers: authHeader(token) },
+                                );
+                                setCreatedBundle({
+                                  bundle_id: result.bundle_id,
+                                  bundle_token: '',
+                                  patient_name: `${detail?.patient?.child_first_name ?? ''} ${detail?.patient?.child_last_name ?? ''}`,
+                                  template_names: [a.template_name],
+                                  fill_url: result.fill_url,
+                                  qr_code_data_url: result.qr_code_data_url,
+                                  expires_at: a.expires_at,
+                                });
+                                setShowQrId(null);
+                              } catch (e) {
+                                setError((e as Error).message);
+                              }
                             }}
                           >
                             View Link
