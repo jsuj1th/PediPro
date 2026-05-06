@@ -110,35 +110,22 @@ export function seedTemplates(): void {
     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  // Fields and groups: always upsert so placements stay current across deploys
-  const upsertField = db.prepare(`
+  const insertField = db.prepare(`
     insert into pdf_template_fields
       (id, template_id, field_id, field_name, field_type, acro_field_name, required,
        page_number, x, y, width, height, options_json, validation_json, section_key,
        display_order, font_size, group_id, group_value, parent_field_id, created_at, updated_at)
     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    on conflict(id) do update set
-      field_id=excluded.field_id, field_name=excluded.field_name,
-      field_type=excluded.field_type, acro_field_name=excluded.acro_field_name,
-      required=excluded.required, page_number=excluded.page_number,
-      x=excluded.x, y=excluded.y, width=excluded.width, height=excluded.height,
-      options_json=excluded.options_json, validation_json=excluded.validation_json,
-      section_key=excluded.section_key, display_order=excluded.display_order,
-      font_size=excluded.font_size, group_id=excluded.group_id,
-      group_value=excluded.group_value, parent_field_id=excluded.parent_field_id,
-      updated_at=excluded.updated_at
   `);
 
-  const upsertGroup = db.prepare(`
+  const insertGroup = db.prepare(`
     insert into field_groups
       (id, template_id, group_type, group_name, acro_group_name, created_at, updated_at)
     values (?, ?, ?, ?, ?, ?, ?)
-    on conflict(id) do update set
-      group_type=excluded.group_type, group_name=excluded.group_name,
-      acro_group_name=excluded.acro_group_name, updated_at=excluded.updated_at
   `);
 
   const existingCount = (db.prepare('select count(*) as n from pdf_templates').get() as { n: number }).n;
+  const templateIds = templates.map((t) => t.id);
 
   const seedAll = db.transaction(() => {
     for (const t of templates) {
@@ -174,16 +161,23 @@ export function seedTemplates(): void {
       );
     }
 
+    // Wipe and replace fields/groups for seeded templates so placements are always current.
+    // The table has multiple unique constraints (id, template_id+field_id, template_id+acro_name)
+    // so a simple upsert can silently fail when UUIDs diverge between local and AWS.
+    const placeholders = templateIds.map(() => '?').join(',');
+    db.prepare(`delete from pdf_template_fields where template_id in (${placeholders})`).run(...templateIds);
+    db.prepare(`delete from field_groups where template_id in (${placeholders})`).run(...templateIds);
+
     const now = nowIso();
     for (const g of groups) {
-      upsertGroup.run(
+      insertGroup.run(
         g.id, g.template_id, g.group_type, g.group_name, g.acro_group_name,
         g.created_at, now,
       );
     }
 
     for (const f of fields) {
-      upsertField.run(
+      insertField.run(
         f.id, f.template_id, f.field_id, f.field_name, f.field_type,
         f.acro_field_name, f.required, f.page_number,
         f.x, f.y, f.width, f.height,
