@@ -9,13 +9,12 @@ import {
   addSubmissionEvent,
   autosaveSubmissionResponses,
   exportSubmissionJson,
-  findDuplicatePatients,
+  autoMergeAllDuplicates,
   getPatientDetail,
   getSubmissionById,
   getStaffByEmail,
   listPatients,
   listSubmissions,
-  mergePatients,
   expireStaleSubmissions,
   replaceChildTable,
   updatePatientCore,
@@ -159,29 +158,10 @@ staffRouter.get('/patients', (req, res) => {
   ok(res, patients);
 });
 
-staffRouter.get('/patients/duplicates', (req, res) => {
-  const groups = findDuplicatePatients(req.user!.practiceId);
-  ok(res, groups);
-});
-
-const mergeSchema = z.object({
-  primary_id: z.string().uuid(),
-  duplicate_id: z.string().uuid(),
-});
-
-staffRouter.post('/patients/merge', (req, res) => {
-  const parsed = mergeSchema.safeParse(req.body);
-  if (!parsed.success) {
-    fail(res, 'VALIDATION_ERROR', 'primary_id and duplicate_id required', 422);
-    return;
-  }
-  if (parsed.data.primary_id === parsed.data.duplicate_id) {
-    fail(res, 'VALIDATION_ERROR', 'Cannot merge a patient with itself', 422);
-    return;
-  }
+staffRouter.post('/patients/merge-duplicates', (req, res) => {
   try {
-    mergePatients(parsed.data.primary_id, parsed.data.duplicate_id, req.user!.practiceId);
-    ok(res, { merged: true });
+    const removed = autoMergeAllDuplicates(req.user!.practiceId);
+    ok(res, { removed });
   } catch (e) {
     fail(res, 'MERGE_FAILED', (e as Error).message, 400);
   }
