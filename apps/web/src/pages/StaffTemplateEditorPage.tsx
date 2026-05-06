@@ -202,6 +202,7 @@ export function StaffTemplateEditorPage({ token }: Props) {
   const [newField, setNewField] = useState<EditableField>(() => emptyField());
   const [editing, setEditing] = useState<Record<string, EditableField>>({});
   const [expandedFields, setExpandedFields] = useState<Set<string>>(new Set());
+  const [selectedMapFieldId, setSelectedMapFieldId] = useState<string | null>(null);
 
   function toggleFieldExpanded(fieldId: string) {
     setExpandedFields((prev) => {
@@ -494,6 +495,69 @@ export function StaffTemplateEditorPage({ token }: Props) {
   const templateRef = useRef(template);
   useEffect(() => { templateRef.current = template; }, [template]);
 
+  // Refs kept fresh each render — used by the keydown undo handler (empty-dep effect)
+  const tokenRef = useRef(token);
+  useEffect(() => { tokenRef.current = token; }, [token]);
+  const editingRef = useRef(editing);
+  useEffect(() => { editingRef.current = editing; }, [editing]);
+  const existingFieldIdsRef = useRef(existingFieldIds);
+  useEffect(() => { existingFieldIdsRef.current = existingFieldIds; }, [existingFieldIds]);
+  const loadTemplateRef = useRef(loadTemplate);
+  useEffect(() => { loadTemplateRef.current = loadTemplate; });
+
+  // History stack for Cmd+Z undo of drag-move/resize operations
+  const posHistoryRef = useRef<Array<{ fieldDbId: string; x: number; y: number; width: number; height: number }>>([]);
+
+  useEffect(() => {
+    async function doUndo() {
+      const entry = posHistoryRef.current.pop();
+      if (!entry) return;
+
+      const tk = tokenRef.current;
+      const tmpl = templateRef.current;
+      const ed = editingRef.current;
+      const existingIds = existingFieldIdsRef.current;
+      if (!tk || !tmpl) return;
+
+      const draft = ed[entry.fieldDbId];
+      if (!draft) return;
+
+      const revertedDraft = { ...draft, x: entry.x, y: entry.y, width: entry.width, height: entry.height };
+      setEditing((prev) => ({ ...prev, [entry.fieldDbId]: revertedDraft }));
+
+      try {
+        const currentFieldId = tmpl.fields.find((f) => f.id === entry.fieldDbId)?.field_id;
+        const payload = buildFieldPayload(revertedDraft, existingIds, currentFieldId);
+        setSaving(`field-${entry.fieldDbId}`);
+        await api(`/api/staff/templates/${tmpl.id}/fields/${entry.fieldDbId}`, {
+          method: 'PATCH',
+          headers: authHeader(tk),
+          body: JSON.stringify(payload),
+        });
+        await loadTemplateRef.current();
+      } catch (e) {
+        setError((e as Error).message);
+        posHistoryRef.current.push(entry); // re-push so undo can be retried
+      } finally {
+        setSaving('');
+      }
+    }
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+        // Only intercept when not typing in an input/textarea
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        if (posHistoryRef.current.length === 0) return;
+        e.preventDefault();
+        doUndo();
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []); // empty deps — all values accessed via refs
+
   async function createBoxedInputBoxes(lastPos: { x: number; y: number; width: number; height: number; page_number: number }) {
     const firstPos = boxedFirstPosRef.current;
     const groupName = boxedGroupNameRef.current;
@@ -599,6 +663,38 @@ export function StaffTemplateEditorPage({ token }: Props) {
           parent_field_id: radioOptionField.id,
           font_size: 10,
         }),
+      });
+      await loadTemplate();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving('');
+    }
+  }
+
+  async function handleFieldPositionUpdate(
+    fieldDbId: string,
+    pos: { x: number; y: number; width: number; height: number },
+  ) {
+    if (!token || !template) return;
+    const draft = editing[fieldDbId];
+    if (!draft) return;
+
+    // Save current position to history so Cmd+Z can revert it
+    posHistoryRef.current.push({ fieldDbId, x: draft.x, y: draft.y, width: draft.width, height: draft.height });
+
+    const updatedDraft = { ...draft, x: pos.x, y: pos.y, width: pos.width, height: pos.height };
+    setEditing((prev) => ({ ...prev, [fieldDbId]: updatedDraft }));
+
+    setError('');
+    try {
+      const currentFieldId = template.fields.find((f) => f.id === fieldDbId)?.field_id;
+      const payload = buildFieldPayload(updatedDraft, existingFieldIds, currentFieldId);
+      setSaving(`field-${fieldDbId}`);
+      await api(`/api/staff/templates/${template.id}/fields/${fieldDbId}`, {
+        method: 'PATCH',
+        headers: authHeader(token),
+        body: JSON.stringify(payload),
       });
       await loadTemplate();
     } catch (e) {
@@ -768,6 +864,9 @@ export function StaffTemplateEditorPage({ token }: Props) {
             height: newField.height,
           }}
           onPageChange={(pageNumber) => setNewField((prev) => ({ ...prev, page_number: pageNumber }))}
+          selectedFieldId={selectedMapFieldId}
+          onFieldSelect={setSelectedMapFieldId}
+          onFieldUpdate={handleFieldPositionUpdate}
           onPositionPick={({ x, y, width, height, page_number }) => {
             // Read from refs so this inline callback is never stale
             if (boxedStepRef.current === 'awaiting_first') {

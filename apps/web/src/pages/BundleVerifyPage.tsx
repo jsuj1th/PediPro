@@ -71,7 +71,7 @@ export function BundleVerifyPage() {
     }
   }
 
-  if (loading) {
+  if (loading && !verified) {
     return (
       <div className="container">
         <div className="card">Loading form details...</div>
@@ -79,7 +79,7 @@ export function BundleVerifyPage() {
     );
   }
 
-  if (loadError) {
+  if (loadError && !verified) {
     const isExpired = loadError.toLowerCase().includes('expired');
     return (
       <div className="container">

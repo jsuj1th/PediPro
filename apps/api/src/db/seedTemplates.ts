@@ -71,13 +71,6 @@ const PDF_FILES: Record<string, { source: string; acroform: string }> = {
 };
 
 export function seedTemplates(): void {
-  // Skip if any templates already exist
-  const existing = db.prepare('select count(*) as n from pdf_templates').get() as { n: number };
-  if (existing.n > 0) {
-    console.log(`[seed] skipping template seed — ${existing.n} template(s) already exist`);
-    return;
-  }
-
   if (!fs.existsSync(DATA_FILE)) {
     console.warn('[seed] template seed skipped — DATA_FILE not found:', DATA_FILE);
     return;
@@ -109,6 +102,7 @@ export function seedTemplates(): void {
     groups: GroupRecord[];
   };
 
+  // Templates: insert once only — preserve existing paths/status on AWS
   const insertTemplate = db.prepare(`
     insert or ignore into pdf_templates
       (id, practice_id, template_key, version, name, source_pdf_path, acroform_pdf_path,
@@ -116,26 +110,42 @@ export function seedTemplates(): void {
     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const insertField = db.prepare(`
-    insert or ignore into pdf_template_fields
+  // Fields and groups: always upsert so placements stay current across deploys
+  const upsertField = db.prepare(`
+    insert into pdf_template_fields
       (id, template_id, field_id, field_name, field_type, acro_field_name, required,
        page_number, x, y, width, height, options_json, validation_json, section_key,
        display_order, font_size, group_id, group_value, parent_field_id, created_at, updated_at)
     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    on conflict(id) do update set
+      field_id=excluded.field_id, field_name=excluded.field_name,
+      field_type=excluded.field_type, acro_field_name=excluded.acro_field_name,
+      required=excluded.required, page_number=excluded.page_number,
+      x=excluded.x, y=excluded.y, width=excluded.width, height=excluded.height,
+      options_json=excluded.options_json, validation_json=excluded.validation_json,
+      section_key=excluded.section_key, display_order=excluded.display_order,
+      font_size=excluded.font_size, group_id=excluded.group_id,
+      group_value=excluded.group_value, parent_field_id=excluded.parent_field_id,
+      updated_at=excluded.updated_at
   `);
 
-  const insertGroup = db.prepare(`
-    insert or ignore into field_groups
+  const upsertGroup = db.prepare(`
+    insert into field_groups
       (id, template_id, group_type, group_name, acro_group_name, created_at, updated_at)
     values (?, ?, ?, ?, ?, ?, ?)
+    on conflict(id) do update set
+      group_type=excluded.group_type, group_name=excluded.group_name,
+      acro_group_name=excluded.acro_group_name, updated_at=excluded.updated_at
   `);
+
+  const existingCount = (db.prepare('select count(*) as n from pdf_templates').get() as { n: number }).n;
 
   const seedAll = db.transaction(() => {
     for (const t of templates) {
       const pdfs = PDF_FILES[t.id];
       if (!pdfs) continue;
 
-      // Copy PDFs from bundle into DATA_PATH
+      // Copy PDFs from bundle into DATA_PATH (safe — only copies if destination absent)
       const sourceDir = path.join(config.dataPath, 'templates', 'source');
       const acroformDir = path.join(config.dataPath, 'templates', t.id);
       fs.mkdirSync(sourceDir, { recursive: true });
@@ -164,29 +174,34 @@ export function seedTemplates(): void {
       );
     }
 
+    const now = nowIso();
     for (const g of groups) {
-      insertGroup.run(
+      upsertGroup.run(
         g.id, g.template_id, g.group_type, g.group_name, g.acro_group_name,
-        g.created_at, nowIso(),
+        g.created_at, now,
       );
     }
 
     for (const f of fields) {
-      insertField.run(
+      upsertField.run(
         f.id, f.template_id, f.field_id, f.field_name, f.field_type,
         f.acro_field_name, f.required, f.page_number,
         f.x, f.y, f.width, f.height,
         f.options_json, f.validation_json, f.section_key,
         f.display_order, f.font_size ?? 12,
         f.group_id ?? null, f.group_value ?? null, f.parent_field_id ?? null,
-        nowIso(), nowIso(),
+        now, now,
       );
     }
   });
 
   try {
     seedAll();
-    console.log(`[seed] seeded ${templates.length} template(s) successfully`);
+    if (existingCount === 0) {
+      console.log(`[seed] seeded ${templates.length} template(s) with ${fields.length} field(s) successfully`);
+    } else {
+      console.log(`[seed] synced ${fields.length} field(s) and ${groups.length} group(s) to existing templates`);
+    }
   } catch (err) {
     console.error('[seed] template seed failed:', err instanceof Error ? err.message : err);
   }

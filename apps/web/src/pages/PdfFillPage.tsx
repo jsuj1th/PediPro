@@ -1,6 +1,6 @@
 import { type CSSProperties, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { GlobalWorkerOptions, getDocument, version } from 'pdfjs-dist';
+import { AnnotationMode, GlobalWorkerOptions, getDocument, version } from 'pdfjs-dist';
 import { api } from '../lib/api';
 import { getLocal, setLocal } from '../lib/storage';
 import type { FormTemplate, TemplateField } from '../lib/types';
@@ -44,6 +44,8 @@ function PageCanvas({
   useEffect(() => {
     if (!scale) return;
     let cancelled = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let renderTask: any = null;
 
     async function render() {
       const page = await pdfDoc.getPage(pageIndex + 1);
@@ -66,13 +68,22 @@ function PageCanvas({
       const ctx = canvas.getContext('2d');
       if (!ctx || cancelled) return;
 
-      await page.render({ canvasContext: ctx, viewport }).promise;
-      if (!cancelled) setPageH(h);
+      // DISABLE annotations so pdfjs doesn't draw its own radio/checkbox circles —
+      // our CSS overlays are the sole visual. Cancel the task on cleanup to avoid
+      // the "same canvas during multiple render()" error in React StrictMode.
+      renderTask = page.render({ canvasContext: ctx, viewport, annotationMode: AnnotationMode.DISABLE });
+      try {
+        await renderTask.promise;
+        if (!cancelled) setPageH(h);
+      } catch {
+        // RenderingCancelledException on cleanup — expected, not an error
+      }
     }
 
     render();
     return () => {
       cancelled = true;
+      renderTask?.cancel();
     };
   }, [pdfDoc, pageIndex, scale]);
 
@@ -133,9 +144,9 @@ function renderField(
     fontFamily: 'Helvetica, Arial, sans-serif',
     padding: 0,
     margin: 0,
-    border: '1px solid #3b82f6',
+    border: '1px solid #9ca3af',
     borderRadius: 0,
-    background: 'rgba(219,234,254,0.45)',
+    background: 'rgba(243,244,246,0.6)',
     boxSizing: 'border-box',
     outline: 'none',
     appearance: 'none',
@@ -150,54 +161,82 @@ function renderField(
 
   switch (field.input_type) {
     case 'checkbox': {
-      const cbSize = Math.max(10, Math.min(cssW, cssH));
+      const isChecked = Boolean(val);
+      const size = Math.min(cssW, cssH);
+      const dotSize = Math.round(size * 0.6);
       return (
-        <input
+        <div
           key={field.field_id}
-          type="checkbox"
-          checked={Boolean(val)}
-          onChange={(e) => setResponse(field.field_id, e.target.checked)}
+          onClick={() => setResponse(field.field_id, !isChecked)}
           style={{
             position: 'absolute',
-            left: cssLeft,
-            top: cssTop,
-            width: cbSize,
-            height: cbSize,
-            margin: 0,
-            padding: 0,
+            left: cssLeft + (cssW - size) / 2,
+            top: cssTop + (cssH - size) / 2,
+            width: size,
+            height: size,
             cursor: 'pointer',
-            accentColor: '#3b82f6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            border: '1px solid #555',
+            boxSizing: 'border-box',
+            background: '#fff',
           }}
-        />
+        >
+          {isChecked && (
+            <div
+              style={{
+                width: dotSize,
+                height: dotSize,
+                background: '#1a1a1a',
+                pointerEvents: 'none',
+              }}
+            />
+          )}
+        </div>
       );
     }
 
     case 'radio_option': {
-      const rbSize = Math.max(10, Math.min(cssW, cssH));
+      const isChecked =
+        responses[`__group_${field.group_id}`] === (field.group_value ?? field.field_id);
+      // The PDF content stream already draws the circle outline. Our overlay is
+      // transparent so we don't place a second (larger) circle on top — we only
+      // render the filled dot when the option is selected.
+      const dotSize = Math.round(Math.min(cssW, cssH) * 0.38);
       return (
-        <input
+        <div
           key={field.field_id}
-          type="radio"
-          name={`rg_${field.group_id}`}
-          value={field.group_value ?? field.field_id}
-          checked={
-            responses[`__group_${field.group_id}`] === (field.group_value ?? field.field_id)
-          }
-          onChange={() =>
+          role="radio"
+          aria-checked={isChecked}
+          onClick={() =>
             setResponse(`__group_${field.group_id!}`, field.group_value ?? field.field_id)
           }
           style={{
             position: 'absolute',
             left: cssLeft,
             top: cssTop,
-            width: rbSize,
-            height: rbSize,
-            margin: 0,
-            padding: 0,
+            width: cssW,
+            height: cssH,
             cursor: 'pointer',
-            accentColor: '#3b82f6',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'transparent',
           }}
-        />
+        >
+          {isChecked && (
+            <div
+              style={{
+                width: dotSize,
+                height: dotSize,
+                borderRadius: '50%',
+                background: '#1a1a1a',
+                pointerEvents: 'none',
+              }}
+            />
+          )}
+        </div>
       );
     }
 
