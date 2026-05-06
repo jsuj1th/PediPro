@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, authHeader } from '../lib/api';
 
@@ -36,6 +36,14 @@ type BundleResult = {
   expires_at: string;
 };
 
+type PatientSearchResult = {
+  id: string;
+  child_first_name: string;
+  child_last_name: string;
+  child_dob: string;
+  account_email: string | null;
+};
+
 export function StaffAssignmentsPage({ token }: Props) {
   const navigate = useNavigate();
 
@@ -44,9 +52,22 @@ export function StaffAssignmentsPage({ token }: Props) {
   const [error, setError] = useState('');
 
   const [showForm, setShowForm] = useState(false);
+  const [patientMode, setPatientMode] = useState<'existing' | 'new'>('existing');
+
+  // Existing patient search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<PatientSearchResult[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<PatientSearchResult | null>(null);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // New patient fields
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [dob, setDob] = useState('');
+
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
   const [expiresInDays, setExpiresInDays] = useState(7);
   const [submitting, setSubmitting] = useState(false);
@@ -54,9 +75,14 @@ export function StaffAssignmentsPage({ token }: Props) {
   const [createdBundle, setCreatedBundle] = useState<BundleResult | null>(null);
   const [copiedLinkId, setCopiedLinkId] = useState<string | null>(null);
   const [showQrId, setShowQrId] = useState<string | null>(null);
+
   const [smsPhone, setSmsPhone] = useState('');
   const [smsSending, setSmsSending] = useState(false);
   const [smsResult, setSmsResult] = useState('');
+
+  const [emailAddress, setEmailAddress] = useState('');
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailResult, setEmailResult] = useState('');
 
   async function loadTemplates() {
     if (!token) return;
@@ -92,33 +118,98 @@ export function StaffAssignmentsPage({ token }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  function handleSearchChange(value: string) {
+    setSearchQuery(value);
+    setSelectedPatient(null);
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (!value.trim()) {
+      setSearchResults([]);
+      setShowDropdown(false);
+      return;
+    }
+    searchDebounceRef.current = setTimeout(async () => {
+      if (!token) return;
+      setSearchLoading(true);
+      try {
+        const results = await api<PatientSearchResult[]>(
+          `/api/staff/patients?search=${encodeURIComponent(value.trim())}`,
+          { headers: authHeader(token) },
+        );
+        setSearchResults(results);
+        setShowDropdown(true);
+      } catch {
+        // non-fatal
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+  }
+
+  function selectPatient(p: PatientSearchResult) {
+    setSelectedPatient(p);
+    setSearchQuery(`${p.child_first_name} ${p.child_last_name}`);
+    setShowDropdown(false);
+    setSearchResults([]);
+    if (p.account_email) setEmailAddress(p.account_email);
+  }
+
   function toggleTemplate(id: string) {
     setSelectedTemplateIds((prev) =>
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id],
     );
   }
 
+  function canCreate() {
+    if (selectedTemplateIds.length === 0) return false;
+    if (patientMode === 'existing') return !!selectedPatient;
+    return !!firstName.trim() && !!lastName.trim() && !!dob;
+  }
+
   async function handleCreate() {
-    if (!token || !firstName.trim() || !lastName.trim() || !dob || selectedTemplateIds.length === 0) return;
+    if (!token || !canCreate()) return;
     setSubmitting(true);
     setError('');
     setSmsResult('');
+    setEmailResult('');
     try {
       const days = expiresInDays >= 1 ? expiresInDays : 7;
+      const body =
+        patientMode === 'existing'
+          ? {
+              patient_id: selectedPatient!.id,
+              template_ids: selectedTemplateIds,
+              expires_in_days: days,
+            }
+          : {
+              first_name: firstName.trim(),
+              last_name: lastName.trim(),
+              dob,
+              template_ids: selectedTemplateIds,
+              expires_in_days: days,
+            };
+
       const result = await api<BundleResult>('/api/staff/assignments', {
         method: 'POST',
         headers: authHeader(token),
-        body: JSON.stringify({
-          first_name: firstName.trim(),
-          last_name: lastName.trim(),
-          dob,
-          template_ids: selectedTemplateIds,
-          expires_in_days: days,
-        }),
+        body: JSON.stringify(body),
       });
       setCreatedBundle(result);
       setShowForm(false);
       setShowQrId(null);
+      // Reset form
+      setSelectedPatient(null);
+      setSearchQuery('');
       setFirstName('');
       setLastName('');
       setDob('');
@@ -158,6 +249,24 @@ export function StaffAssignmentsPage({ token }: Props) {
       setSmsResult(`Failed: ${(e as Error).message}`);
     } finally {
       setSmsSending(false);
+    }
+  }
+
+  async function handleSendEmail() {
+    if (!token || !emailAddress || !createdBundle?.bundle_id) return;
+    setEmailSending(true);
+    setEmailResult('');
+    try {
+      await api(`/api/staff/assignments/bundle/${createdBundle.bundle_id}/send-email`, {
+        method: 'POST',
+        headers: authHeader(token),
+        body: JSON.stringify({ email: emailAddress }),
+      });
+      setEmailResult('Email sent.');
+    } catch (e) {
+      setEmailResult(`Failed: ${(e as Error).message}`);
+    } finally {
+      setEmailSending(false);
     }
   }
 
@@ -235,19 +344,136 @@ export function StaffAssignmentsPage({ token }: Props) {
         {showForm && (
           <div className="card" style={{ background: '#f0f7ff', marginTop: 16 }}>
             <h3 style={{ marginTop: 0 }}>Create Assignment</h3>
-            <div className="row">
-              <div className="field">
-                <label>First Name</label>
-                <input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Jane" />
+
+            {/* Patient mode toggle */}
+            <div style={{ display: 'flex', gap: 0, marginBottom: 16, borderRadius: 6, overflow: 'hidden', border: '1px solid #c5d8f0', width: 'fit-content' }}>
+              <button
+                onClick={() => setPatientMode('existing')}
+                style={{
+                  borderRadius: 0,
+                  border: 'none',
+                  background: patientMode === 'existing' ? '#2563eb' : '#fff',
+                  color: patientMode === 'existing' ? '#fff' : '#333',
+                  padding: '6px 16px',
+                  fontWeight: patientMode === 'existing' ? 600 : 400,
+                  cursor: 'pointer',
+                }}
+              >
+                Existing Patient
+              </button>
+              <button
+                onClick={() => setPatientMode('new')}
+                style={{
+                  borderRadius: 0,
+                  border: 'none',
+                  borderLeft: '1px solid #c5d8f0',
+                  background: patientMode === 'new' ? '#2563eb' : '#fff',
+                  color: patientMode === 'new' ? '#fff' : '#333',
+                  padding: '6px 16px',
+                  fontWeight: patientMode === 'new' ? 600 : 400,
+                  cursor: 'pointer',
+                }}
+              >
+                New Patient
+              </button>
+            </div>
+
+            {patientMode === 'existing' ? (
+              <div style={{ marginBottom: 12 }}>
+                <div className="field" ref={dropdownRef} style={{ position: 'relative', maxWidth: 360 }}>
+                  <label>Search Patient</label>
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => handleSearchChange(e.target.value)}
+                    placeholder="Search by first or last name..."
+                    autoComplete="off"
+                  />
+                  {searchLoading && (
+                    <div style={{ fontSize: 12, color: '#888', marginTop: 4 }}>Searching...</div>
+                  )}
+                  {showDropdown && searchResults.length > 0 && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      background: '#fff',
+                      border: '1px solid #c5d8f0',
+                      borderRadius: 6,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                      zIndex: 100,
+                      maxHeight: 220,
+                      overflowY: 'auto',
+                    }}>
+                      {searchResults.map((p) => (
+                        <div
+                          key={p.id}
+                          onClick={() => selectPatient(p)}
+                          style={{
+                            padding: '10px 14px',
+                            cursor: 'pointer',
+                            borderBottom: '1px solid #f0f0f0',
+                          }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = '#f0f7ff')}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = '')}
+                        >
+                          <div style={{ fontWeight: 600 }}>{p.child_first_name} {p.child_last_name}</div>
+                          <div style={{ fontSize: 12, color: '#666' }}>DOB: {p.child_dob}{p.account_email ? ` · ${p.account_email}` : ''}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {showDropdown && searchResults.length === 0 && !searchLoading && searchQuery.trim() && (
+                    <div style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      background: '#fff',
+                      border: '1px solid #c5d8f0',
+                      borderRadius: 6,
+                      padding: '10px 14px',
+                      fontSize: 13,
+                      color: '#888',
+                      zIndex: 100,
+                    }}>
+                      No patients found. Try "New Patient" to create one.
+                    </div>
+                  )}
+                </div>
+                {selectedPatient && (
+                  <div style={{ marginTop: 8, padding: '8px 12px', background: '#dbeafe', borderRadius: 6, border: '1px solid #3b82f6', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8, maxWidth: 360 }}>
+                    <span style={{ flex: 1 }}>
+                      <strong>{selectedPatient.child_first_name} {selectedPatient.child_last_name}</strong>
+                      <span style={{ color: '#555', marginLeft: 8 }}>DOB: {selectedPatient.child_dob}</span>
+                    </span>
+                    <button
+                      onClick={() => { setSelectedPatient(null); setSearchQuery(''); }}
+                      style={{ fontSize: 11, padding: '2px 8px', color: '#c00', borderColor: '#c00', background: 'transparent' }}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
               </div>
-              <div className="field">
-                <label>Last Name</label>
-                <input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" />
+            ) : (
+              <div className="row" style={{ marginBottom: 0 }}>
+                <div className="field">
+                  <label>First Name</label>
+                  <input value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="Jane" />
+                </div>
+                <div className="field">
+                  <label>Last Name</label>
+                  <input value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Doe" />
+                </div>
+                <div className="field">
+                  <label>Date of Birth</label>
+                  <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
+                </div>
               </div>
-              <div className="field">
-                <label>Date of Birth</label>
-                <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
-              </div>
+            )}
+
+            <div className="row" style={{ marginBottom: 12 }}>
               <div className="field">
                 <label>Expires After (days)</label>
                 <input
@@ -303,15 +529,17 @@ export function StaffAssignmentsPage({ token }: Props) {
 
             <button
               onClick={handleCreate}
-              disabled={submitting || !firstName.trim() || !lastName.trim() || !dob || selectedTemplateIds.length === 0}
+              disabled={submitting || !canCreate()}
             >
               {submitting
                 ? 'Creating...'
                 : `Create ${selectedTemplateIds.length > 1 ? `${selectedTemplateIds.length} Assignment Links` : 'Assignment Link'}`}
             </button>
-            <p style={{ fontSize: 12, color: '#666', marginTop: 8, marginBottom: 0 }}>
-              If no patient record exists for this name + DOB, one will be created automatically.
-            </p>
+            {patientMode === 'new' && (
+              <p style={{ fontSize: 12, color: '#666', marginTop: 8, marginBottom: 0 }}>
+                If no patient record exists for this name + DOB, one will be created automatically.
+              </p>
+            )}
           </div>
         )}
 
@@ -342,25 +570,47 @@ export function StaffAssignmentsPage({ token }: Props) {
               />
             )}
             {createdBundle.bundle_id && (
-              <div style={{ padding: 12, background: '#f8faff', borderRadius: 8, border: '1px solid #dde' }}>
-                <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>Send via SMS</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    type="tel"
-                    placeholder="+15551234567"
-                    value={smsPhone}
-                    onChange={(e) => setSmsPhone(e.target.value)}
-                    style={{ width: 180 }}
-                  />
-                  <button onClick={handleSendSms} disabled={smsSending || !smsPhone}>
-                    {smsSending ? 'Sending...' : 'Send SMS'}
-                  </button>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 240, padding: 12, background: '#f8faff', borderRadius: 8, border: '1px solid #dde' }}>
+                  <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>Send via SMS</label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="tel"
+                      placeholder="+15551234567"
+                      value={smsPhone}
+                      onChange={(e) => setSmsPhone(e.target.value)}
+                      style={{ width: 160 }}
+                    />
+                    <button onClick={handleSendSms} disabled={smsSending || !smsPhone}>
+                      {smsSending ? 'Sending...' : 'Send SMS'}
+                    </button>
+                  </div>
+                  {smsResult && (
+                    <p style={{ marginTop: 6, fontSize: 13, color: smsResult.startsWith('Failed') ? '#c00' : '#0a0' }}>
+                      {smsResult}
+                    </p>
+                  )}
                 </div>
-                {smsResult && (
-                  <p style={{ marginTop: 6, fontSize: 13, color: smsResult.startsWith('Failed') ? '#c00' : '#0a0' }}>
-                    {smsResult}
-                  </p>
-                )}
+                <div style={{ flex: 1, minWidth: 240, padding: 12, background: '#f8faff', borderRadius: 8, border: '1px solid #dde' }}>
+                  <label style={{ display: 'block', fontWeight: 600, marginBottom: 6 }}>Send via Email</label>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <input
+                      type="email"
+                      placeholder="patient@example.com"
+                      value={emailAddress}
+                      onChange={(e) => setEmailAddress(e.target.value)}
+                      style={{ width: 200 }}
+                    />
+                    <button onClick={handleSendEmail} disabled={emailSending || !emailAddress}>
+                      {emailSending ? 'Sending...' : 'Send Email'}
+                    </button>
+                  </div>
+                  {emailResult && (
+                    <p style={{ marginTop: 6, fontSize: 13, color: emailResult.startsWith('Failed') ? '#c00' : '#0a0' }}>
+                      {emailResult}
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </div>

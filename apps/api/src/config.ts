@@ -21,6 +21,13 @@ export const config = {
     authToken: process.env.TWILIO_AUTH_TOKEN ?? '',
     fromNumber: process.env.TWILIO_FROM_NUMBER ?? '',
   },
+  email: {
+    smtpHost: process.env.SMTP_HOST ?? '',
+    smtpPort: Number(process.env.SMTP_PORT ?? 587),
+    smtpUser: process.env.SMTP_USER ?? '',
+    smtpPass: process.env.SMTP_PASS ?? '',
+    fromAddress: process.env.EMAIL_FROM ?? process.env.SMTP_USER ?? '',
+  },
   rootPath,
   dataPath,
 };

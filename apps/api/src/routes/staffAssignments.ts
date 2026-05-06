@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import QRCode from 'qrcode';
 import { z } from 'zod';
+import nodemailer from 'nodemailer';
 import { config } from '../config.js';
 import { ok, fail } from '../lib/response.js';
 import {
@@ -242,6 +243,69 @@ staffAssignmentsRouter.post('/bundle/:bundleId/send-sms', async (req, res) => {
   }
 
   ok(res, { sent: true, to: parsed.data.phone });
+});
+
+const emailSchema = z.object({
+  email: z.string().email(),
+});
+
+staffAssignmentsRouter.post('/bundle/:bundleId/send-email', async (req, res) => {
+  const parsed = emailSchema.safeParse(req.body);
+  if (!parsed.success) {
+    fail(res, 'VALIDATION_ERROR', 'Valid email address required', 422);
+    return;
+  }
+
+  const auth = req.user as { practiceId: string };
+  const bundle = db
+    .prepare('select * from assignment_bundles where id = ? and practice_id = ?')
+    .get(req.params.bundleId, auth.practiceId) as
+    | { id: string; practice_id: string; patient_id: string; token: string; expires_at: string }
+    | undefined;
+
+  if (!bundle) {
+    fail(res, 'NOT_FOUND', 'Bundle not found', 404);
+    return;
+  }
+
+  if (new Date(bundle.expires_at) < new Date()) {
+    fail(res, 'BUNDLE_EXPIRED', 'This bundle has expired', 400);
+    return;
+  }
+
+  if (!config.email.smtpHost || !config.email.smtpUser || !config.email.smtpPass) {
+    fail(res, 'EMAIL_NOT_CONFIGURED', 'Email sending is not configured. Set SMTP_HOST, SMTP_USER, and SMTP_PASS.', 503);
+    return;
+  }
+
+  const fillUrl = `${config.frontendUrl}/fill/bundle/${bundle.token}`;
+  const patient = db
+    .prepare('select child_first_name, child_last_name from patients where id = ?')
+    .get(bundle.patient_id) as { child_first_name: string; child_last_name: string } | undefined;
+
+  const patientName = patient
+    ? `${patient.child_first_name} ${patient.child_last_name}`
+    : 'your child';
+  const formCount = (db
+    .prepare('select count(*) as n from form_assignments where bundle_id = ?')
+    .get(bundle.id) as { n: number }).n;
+
+  const transporter = nodemailer.createTransport({
+    host: config.email.smtpHost,
+    port: config.email.smtpPort,
+    secure: config.email.smtpPort === 465,
+    auth: { user: config.email.smtpUser, pass: config.email.smtpPass },
+  });
+
+  await transporter.sendMail({
+    from: config.email.fromAddress,
+    to: parsed.data.email,
+    subject: `Medical form${formCount > 1 ? 's' : ''} ready for ${patientName}`,
+    text: `Your medical form${formCount > 1 ? 's' : ''} for ${patientName} ${formCount > 1 ? 'are' : 'is'} ready to complete.\n\nPlease visit the link below to fill them out:\n${fillUrl}\n\nThis link expires on ${new Date(bundle.expires_at).toLocaleDateString()}.`,
+    html: `<p>Your medical form${formCount > 1 ? 's' : ''} for <strong>${patientName}</strong> ${formCount > 1 ? 'are' : 'is'} ready to complete.</p><p><a href="${fillUrl}">Click here to fill out the form${formCount > 1 ? 's' : ''}</a></p><p style="color:#888;font-size:12px;">This link expires on ${new Date(bundle.expires_at).toLocaleDateString()}.</p>`,
+  });
+
+  ok(res, { sent: true, to: parsed.data.email });
 });
 
 staffAssignmentsRouter.post('/:id/send-sms', async (req, res) => {
