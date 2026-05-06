@@ -11,70 +11,27 @@ export function StaffPatientsPage({ token }: Props) {
   const [search, setSearch] = useState('');
   const [patients, setPatients] = useState<any[]>([]);
   const [error, setError] = useState('');
-  const [merging, setMerging] = useState(false);
-  const [mergeResult, setMergeResult] = useState('');
-
-  function loadPatients() {
-    if (!token) return;
-    api<any[]>(`/api/staff/patients?search=${encodeURIComponent(search)}`, {
-      headers: authHeader(token),
-    })
-      .then(setPatients)
-      .catch((e) => setError((e as Error).message));
-  }
 
   useEffect(() => {
     if (!token) {
       navigate('/staff/login');
       return;
     }
-    loadPatients();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, search, navigate]);
 
-  async function handleMergeDuplicates() {
-    if (!token) return;
-    setMerging(true);
-    setMergeResult('');
-    try {
-      const result = await api<{ removed: number }>('/api/staff/patients/merge-duplicates', {
-        method: 'POST',
-        headers: authHeader(token),
-      });
-      setMergeResult(
-        result.removed === 0
-          ? 'No duplicates found.'
-          : `Merged ${result.removed} duplicate record${result.removed !== 1 ? 's' : ''}.`,
-      );
-      loadPatients();
-    } catch (e) {
-      setMergeResult(`Failed: ${(e as Error).message}`);
-    } finally {
-      setMerging(false);
-    }
-  }
+    api<any[]>(`/api/staff/patients?search=${encodeURIComponent(search)}`, {
+      headers: authHeader(token),
+    })
+      .then(setPatients)
+      .catch((e) => setError((e as Error).message));
+  }, [token, search, navigate]);
 
   return (
     <div className="container">
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-          <h2 style={{ margin: 0 }}>Staff Patient Workspace</h2>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {mergeResult && (
-              <span style={{ fontSize: 13, color: mergeResult.startsWith('Failed') ? '#c00' : '#0a0' }}>
-                {mergeResult}
-              </span>
-            )}
-            <button className="secondary" onClick={handleMergeDuplicates} disabled={merging}>
-              {merging ? 'Merging...' : 'Merge Duplicates'}
-            </button>
-          </div>
-        </div>
-
+        <h2>Staff Patient Workspace</h2>
         <p>
           Need to manage form templates? <Link to="/staff/templates">Open Template Builder</Link>
         </p>
-
         <div className="row">
           <div className="field">
             <label>Search by Name</label>

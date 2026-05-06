@@ -9,7 +9,6 @@ import {
   addSubmissionEvent,
   autosaveSubmissionResponses,
   exportSubmissionJson,
-  autoMergeAllDuplicates,
   getPatientDetail,
   getSubmissionById,
   getStaffByEmail,
@@ -156,15 +155,6 @@ staffRouter.get('/patients', (req, res) => {
   const search = typeof req.query.search === 'string' ? req.query.search : undefined;
   const patients = listPatients(req.user!.practiceId, search);
   ok(res, patients);
-});
-
-staffRouter.post('/patients/merge-duplicates', (req, res) => {
-  try {
-    const removed = autoMergeAllDuplicates(req.user!.practiceId);
-    ok(res, { removed });
-  } catch (e) {
-    fail(res, 'MERGE_FAILED', (e as Error).message, 400);
-  }
 });
 
 staffRouter.get('/patients/:id', (req, res) => {
