@@ -49,6 +49,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: SMTP_HOST,SMTP_PORT,SMTP_USER,SMTP_PASS,EMAIL_FROM,JWT_SECRET,FRONTEND_URL,DATA_PATH
           script: |
             pm2 stop pediform-api || true
             sudo rm -rf /var/app/dist /var/app/node_modules
@@ -56,6 +57,17 @@ jobs:
             sudo chown -R ec2-user:ec2-user /var/app
             tar -xzf /home/ec2-user/pediform-api.tar.gz -C /var/app
             rm /home/ec2-user/pediform-api.tar.gz
+            cat > /var/app/.env <<EOF
+            JWT_SECRET=${JWT_SECRET}
+            FRONTEND_URL=${FRONTEND_URL}
+            DATA_PATH=${DATA_PATH}
+            SMTP_HOST=${SMTP_HOST}
+            SMTP_PORT=${SMTP_PORT}
+            SMTP_USER=${SMTP_USER}
+            SMTP_PASS=${SMTP_PASS}
+            EMAIL_FROM=${EMAIL_FROM}
+            EOF
+            chmod 600 /var/app/.env
             pm2 restart pediform-api || pm2 start /var/app/dist/index.js --name pediform-api
             pm2 save
 
