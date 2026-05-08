@@ -102,12 +102,15 @@ export function seedTemplates(): void {
     groups: GroupRecord[];
   };
 
-  // Templates: insert once only — preserve existing paths/status on AWS
+  // Templates: insert if new, then always update the PDF paths so swapped PDFs take effect
   const insertTemplate = db.prepare(`
     insert or ignore into pdf_templates
       (id, practice_id, template_key, version, name, source_pdf_path, acroform_pdf_path,
        status, created_by, created_at, updated_at)
     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const updateTemplatePaths = db.prepare(`
+    update pdf_templates set source_pdf_path = ?, acroform_pdf_path = ? where id = ?
   `);
 
   const insertField = db.prepare(`
@@ -159,6 +162,7 @@ export function seedTemplates(): void {
         sourceRelPath, acroformRelPath,
         t.status, staff.id, t.created_at, t.updated_at,
       );
+      updateTemplatePaths.run(sourceRelPath, acroformRelPath, t.id);
     }
 
     // Wipe and replace fields/groups for seeded templates so placements are always current.
