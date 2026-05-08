@@ -132,7 +132,7 @@ export function seedTemplates(): void {
       const pdfs = PDF_FILES[t.id];
       if (!pdfs) continue;
 
-      // Copy PDFs from bundle into DATA_PATH (safe — only copies if destination absent)
+      // Copy PDFs from bundle into DATA_PATH (always overwrite so deploys pick up new PDFs)
       const sourceDir = path.join(config.dataPath, 'templates', 'source');
       const acroformDir = path.join(config.dataPath, 'templates', t.id);
       fs.mkdirSync(sourceDir, { recursive: true });
@@ -147,10 +147,10 @@ export function seedTemplates(): void {
       const bundledSource = path.join(PDFS_DIR, pdfs.source);
       const bundledAcroform = path.join(PDFS_DIR, pdfs.acroform);
 
-      if (fs.existsSync(bundledSource) && !fs.existsSync(sourceDestPath)) {
+      if (fs.existsSync(bundledSource)) {
         fs.copyFileSync(bundledSource, sourceDestPath);
       }
-      if (fs.existsSync(bundledAcroform) && !fs.existsSync(acroformDestPath)) {
+      if (fs.existsSync(bundledAcroform)) {
         fs.copyFileSync(bundledAcroform, acroformDestPath);
       }
 
