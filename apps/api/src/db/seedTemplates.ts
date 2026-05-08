@@ -135,15 +135,20 @@ export function seedTemplates(): void {
     values (?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const existingCount = (db.prepare('select count(*) as n from pdf_templates').get() as { n: number }).n;
-  const templateIds = templates.map((t) => t.id);
+  const countFieldsForTemplate = db.prepare(
+    'select count(*) as n from pdf_template_fields where template_id = ?',
+  );
 
   const seedAll = db.transaction(() => {
+    let seededTemplates = 0;
+    let seededFields = 0;
+    let seededGroups = 0;
+
     for (const t of templates) {
       const pdfs = PDF_FILES[t.id];
       if (!pdfs) continue;
 
-      // Copy PDFs from bundle into DATA_PATH (always overwrite so deploys pick up new PDFs)
+      // Always copy PDFs and upsert the template row so new deploys pick up PDF changes.
       const sourceDir = path.join(config.dataPath, 'templates', 'source');
       const acroformDir = path.join(config.dataPath, 'templates', t.id);
       fs.mkdirSync(sourceDir, { recursive: true });
@@ -158,12 +163,8 @@ export function seedTemplates(): void {
       const bundledSource = path.join(PDFS_DIR, pdfs.source);
       const bundledAcroform = path.join(PDFS_DIR, pdfs.acroform);
 
-      if (fs.existsSync(bundledSource)) {
-        fs.copyFileSync(bundledSource, sourceDestPath);
-      }
-      if (fs.existsSync(bundledAcroform)) {
-        fs.copyFileSync(bundledAcroform, acroformDestPath);
-      }
+      if (fs.existsSync(bundledSource)) fs.copyFileSync(bundledSource, sourceDestPath);
+      if (fs.existsSync(bundledAcroform)) fs.copyFileSync(bundledAcroform, acroformDestPath);
 
       insertTemplate.run(
         t.id, practice.id, t.template_key, t.version, t.name,
@@ -171,42 +172,44 @@ export function seedTemplates(): void {
         t.status, staff.id, t.created_at, t.updated_at,
       );
       updateTemplatePaths.run(sourceRelPath, acroformRelPath, t.id);
+
+      // Skip field seeding if this template already has fields — DB is the source of truth.
+      const existing = (countFieldsForTemplate.get(t.id) as { n: number }).n;
+      if (existing > 0) continue;
+
+      const now = nowIso();
+      const templateGroups = groups.filter((g) => g.template_id === t.id);
+      const templateFields = fields.filter((f) => f.template_id === t.id);
+
+      for (const g of templateGroups) {
+        insertGroup.run(g.id, g.template_id, g.group_type, g.group_name, g.acro_group_name, g.created_at, now);
+      }
+      for (const f of templateFields) {
+        insertField.run(
+          f.id, f.template_id, f.field_id, f.field_name, f.field_type,
+          f.acro_field_name, f.required, f.page_number,
+          f.x, f.y, f.width, f.height,
+          f.options_json, f.validation_json, f.section_key,
+          f.display_order, f.font_size ?? 12,
+          f.group_id ?? null, f.group_value ?? null, f.parent_field_id ?? null,
+          now, now,
+        );
+      }
+
+      seededTemplates++;
+      seededFields += templateFields.length;
+      seededGroups += templateGroups.length;
     }
 
-    // Wipe and replace fields/groups for seeded templates so placements are always current.
-    // The table has multiple unique constraints (id, template_id+field_id, template_id+acro_name)
-    // so a simple upsert can silently fail when UUIDs diverge between local and AWS.
-    const placeholders = templateIds.map(() => '?').join(',');
-    db.prepare(`delete from pdf_template_fields where template_id in (${placeholders})`).run(...templateIds);
-    db.prepare(`delete from field_groups where template_id in (${placeholders})`).run(...templateIds);
-
-    const now = nowIso();
-    for (const g of groups) {
-      insertGroup.run(
-        g.id, g.template_id, g.group_type, g.group_name, g.acro_group_name,
-        g.created_at, now,
-      );
-    }
-
-    for (const f of fields) {
-      insertField.run(
-        f.id, f.template_id, f.field_id, f.field_name, f.field_type,
-        f.acro_field_name, f.required, f.page_number,
-        f.x, f.y, f.width, f.height,
-        f.options_json, f.validation_json, f.section_key,
-        f.display_order, f.font_size ?? 12,
-        f.group_id ?? null, f.group_value ?? null, f.parent_field_id ?? null,
-        now, now,
-      );
-    }
+    return { seededTemplates, seededFields, seededGroups };
   });
 
   try {
-    seedAll();
-    if (existingCount === 0) {
-      console.log(`[seed] seeded ${templates.length} template(s) with ${fields.length} field(s) successfully`);
+    const { seededTemplates, seededFields, seededGroups } = seedAll();
+    if (seededTemplates > 0) {
+      console.log(`[seed] bootstrapped ${seededTemplates} new template(s) with ${seededFields} field(s) and ${seededGroups} group(s)`);
     } else {
-      console.log(`[seed] synced ${fields.length} field(s) and ${groups.length} group(s) to existing templates`);
+      console.log('[seed] all templates already seeded — skipping field overwrite (DB is source of truth)');
     }
   } catch (err) {
     console.error('[seed] template seed failed:', err instanceof Error ? err.message : err);
