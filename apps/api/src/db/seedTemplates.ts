@@ -68,6 +68,10 @@ const PDF_FILES: Record<string, { source: string; acroform: string }> = {
     source: 'asq30_source.pdf',
     acroform: 'asq30_acroform.pdf',
   },
+  '0428202b-938a-4a88-b422-a58343de4726': {
+    source: 'asq12mos_source.pdf',
+    acroform: 'asq12mos_acroform.pdf',
+  },
 };
 
 export function seedTemplates(): void {
