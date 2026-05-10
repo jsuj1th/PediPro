@@ -200,10 +200,7 @@ function renderField(
     case 'radio_option': {
       const isChecked =
         responses[`__group_${field.group_id}`] === (field.group_value ?? field.field_id);
-      // The PDF content stream already draws the circle outline. Our overlay is
-      // transparent so we don't place a second (larger) circle on top — we only
-      // render the filled dot when the option is selected.
-      const dotSize = Math.round(Math.min(cssW, cssH) * 0.38);
+      const dotSize = Math.round(Math.min(cssW, cssH) * 0.55);
       return (
         <div
           key={field.field_id}
@@ -222,7 +219,10 @@ function renderField(
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'transparent',
+            background: isChecked ? 'rgba(26,26,26,0.08)' : 'transparent',
+            borderRadius: '50%',
+            border: isChecked ? '1.5px solid #1a1a1a' : '1.5px solid rgba(0,0,0,0.35)',
+            boxSizing: 'border-box',
           }}
         >
           {isChecked && (
