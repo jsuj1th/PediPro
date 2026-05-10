@@ -504,6 +504,10 @@ export function StaffTemplateEditorPage({ token }: Props) {
   useEffect(() => { existingFieldIdsRef.current = existingFieldIds; }, [existingFieldIds]);
   const loadTemplateRef = useRef(loadTemplate);
   useEffect(() => { loadTemplateRef.current = loadTemplate; });
+  const selectedMapFieldIdRef = useRef(selectedMapFieldId);
+  useEffect(() => { selectedMapFieldIdRef.current = selectedMapFieldId; }, [selectedMapFieldId]);
+  const deleteFieldRef = useRef(deleteField);
+  useEffect(() => { deleteFieldRef.current = deleteField; });
 
   // History stack for Cmd+Z undo of drag-move/resize operations
   const posHistoryRef = useRef<Array<{ fieldDbId: string; x: number; y: number; width: number; height: number }>>([]);
@@ -544,13 +548,22 @@ export function StaffTemplateEditorPage({ token }: Props) {
     }
 
     function handleKeyDown(e: KeyboardEvent) {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
       if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-        // Only intercept when not typing in an input/textarea
-        const tag = (e.target as HTMLElement)?.tagName;
-        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
         if (posHistoryRef.current.length === 0) return;
         e.preventDefault();
         doUndo();
+        return;
+      }
+
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        const fieldId = selectedMapFieldIdRef.current;
+        if (!fieldId) return;
+        e.preventDefault();
+        setSelectedMapFieldId(null);
+        deleteFieldRef.current(fieldId);
       }
     }
 
