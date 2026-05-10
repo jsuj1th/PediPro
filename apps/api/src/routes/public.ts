@@ -330,6 +330,7 @@ publicRouter.get('/submissions/:id/template', (req, res) => {
       const responses = parseJson<Record<string, unknown>>(submission.responses_json, {});
       ok(res, {
         submission_id: submission.id,
+        visit_type: submission.visit_type,
         ...mapped,
         responses,
       });
@@ -343,6 +344,7 @@ publicRouter.get('/submissions/:id/template', (req, res) => {
     const legacyTemplate = loadTemplate('new_patient_paperwork');
     ok(res, {
       submission_id: submission.id,
+      visit_type: submission.visit_type,
       ...legacyTemplate,
       responses: {},
     });

@@ -124,7 +124,7 @@ export function BundleVerifyPage() {
                 <div style={{ flexShrink: 0, width: 100, textAlign: 'right' }}>
                   {a.status !== 'completed' ? (
                     <button
-                      onClick={() => navigate(`/p/${a.practice_slug}/session/${a.session_id}/pdf-form`)}
+                      onClick={() => navigate(`/p/${a.practice_slug}/session/${a.session_id}/overview`)}
                       style={{ width: '100%' }}
                     >
                       Fill Form

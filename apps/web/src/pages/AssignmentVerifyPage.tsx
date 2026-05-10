@@ -44,7 +44,7 @@ export function AssignmentVerifyPage() {
           body: JSON.stringify({ first_name: firstName, last_name: lastName, dob }),
         },
       );
-      navigate(`/p/${result.practice_slug}/session/${result.session_id}/pdf-form`);
+      navigate(`/p/${result.practice_slug}/session/${result.session_id}/overview`);
     } catch (e) {
       setVerifyError((e as Error).message);
     } finally {

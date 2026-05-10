@@ -110,7 +110,7 @@ assignmentsRouter.post('/bundle/:token/verify', (req, res) => {
     const submission = createSubmission({
       practiceId: bundle.practice_id,
       patientId: bundle.patient_id,
-      visitType: patient.visit_type ?? 'new_patient',
+      visitType: patient.visit_type || 'new_patient',
       formId: String(template.template_key),
       templateVersion: `${String(template.template_key)}@v${String(template.version)}`,
       templateId: String(template.id),
@@ -272,7 +272,7 @@ assignmentsRouter.post('/:token/verify', (req, res) => {
   const submission = createSubmission({
     practiceId: assignment.practice_id,
     patientId: assignment.patient_id,
-    visitType: patient.visit_type ?? 'new_patient',
+    visitType: patient.visit_type || 'new_patient',
     formId: String(template.template_key),
     templateVersion: `${String(template.template_key)}@v${String(template.version)}`,
     templateId: String(template.id),

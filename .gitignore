@@ -11,6 +11,9 @@ build
 .DS_Store
 coverage
 data/*
+apps/data/submissions/
+apps/data/templates/*/
+apps/data/debug/
 PROGRESS.md
 memory/
 

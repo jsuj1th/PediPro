@@ -39,4 +39,5 @@ export type FormTemplate = {
   responses?: Record<string, unknown>;
   groups?: FieldGroup[];
   acroform_ready?: boolean;
+  visit_type?: string;
 };
