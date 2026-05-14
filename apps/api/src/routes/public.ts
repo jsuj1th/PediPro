@@ -21,6 +21,7 @@ import {
   completeSubmission,
   completeSubmissionWithPdf,
   createSubmission,
+  findPatientIdByPracticeNameDob,
   findPracticeById,
   findPracticeBySlug,
   getSubmissionById,
@@ -226,8 +227,16 @@ publicRouter.post('/submissions', (req, res) => {
     template_key: selectedTemplateKey,
   };
 
+  const existingPatientId = findPatientIdByPracticeNameDob(
+    parsed.data.practice_id,
+    parsed.data.child_first_name,
+    parsed.data.child_last_name,
+    parsed.data.child_dob,
+  );
+
   const submission = createSubmission({
     practiceId: parsed.data.practice_id,
+    patientId: existingPatientId,
     visitType: parsed.data.visit_type,
     formId: String(template.template_key),
     templateVersion: `${String(template.template_key)}@v${String(template.version)}`,

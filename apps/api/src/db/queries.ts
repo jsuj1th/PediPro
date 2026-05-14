@@ -77,6 +77,37 @@ export function getSubmissionByIdOrThrow(id: string): SubmissionRow {
   return row;
 }
 
+/** Normalize DOB for identity matching (YYYY-MM-DD prefix from ISO or date input). */
+export function normalizeDobForMatch(dob: string): string {
+  const t = String(dob ?? '').trim();
+  const m = t.match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : t;
+}
+
+/**
+ * Same identity rule as Excel bulk import and staff assignments: one row per practice
+ * for matching child first name, last name, and DOB (case-insensitive names, trimmed).
+ */
+export function findPatientIdByPracticeNameDob(
+  practiceId: string,
+  firstName: string,
+  lastName: string,
+  dob: string,
+): string | undefined {
+  const dobNorm = normalizeDobForMatch(dob);
+  if (!dobNorm) return undefined;
+  const row = db
+    .prepare(
+      `select id from patients where practice_id = ?
+         and lower(trim(child_first_name)) = lower(trim(?))
+         and lower(trim(child_last_name)) = lower(trim(?))
+         and child_dob = ?
+       limit 1`,
+    )
+    .get(practiceId, firstName.trim(), lastName.trim(), dobNorm) as { id: string } | undefined;
+  return row?.id;
+}
+
 function deepMerge(a: unknown, b: unknown): unknown {
   if (Array.isArray(a) && Array.isArray(b)) return b;
   if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
@@ -209,11 +240,22 @@ export function materializePatientFromSubmission(submissionId: string): { patien
   const consent = form.consent_signature ?? {};
 
   const now = nowIso();
-  const existingPatient = submission.patient_id
+  const submissionLinkedPatient = submission.patient_id
     ? (db.prepare('select id from patients where id = ?').get(submission.patient_id) as { id: string } | undefined)
     : undefined;
 
-  const patientId = existingPatient?.id ?? randomUUID();
+  let patientId: string;
+  if (submissionLinkedPatient?.id) {
+    patientId = submissionLinkedPatient.id;
+  } else {
+    const matched = findPatientIdByPracticeNameDob(
+      submission.practice_id,
+      String(child.first_name ?? ''),
+      String(child.last_name ?? ''),
+      String(child.dob ?? ''),
+    );
+    patientId = matched ?? randomUUID();
+  }
 
   db.prepare(
     `insert into patients (
@@ -221,14 +263,17 @@ export function materializePatientFromSubmission(submissionId: string): { patien
       preferred_language, sex, race_ethnicity, created_at, updated_at
     ) values (?, ?, null, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     on conflict(id) do update set
-      child_first_name=excluded.child_first_name,
-      child_last_name=excluded.child_last_name,
-      child_dob=excluded.child_dob,
-      visit_type=excluded.visit_type,
-      preferred_language=excluded.preferred_language,
-      sex=excluded.sex,
-      race_ethnicity=excluded.race_ethnicity,
-      updated_at=excluded.updated_at`,
+      child_first_name = case when nullif(trim(excluded.child_first_name), '') is not null
+        then excluded.child_first_name else patients.child_first_name end,
+      child_last_name = case when nullif(trim(excluded.child_last_name), '') is not null
+        then excluded.child_last_name else patients.child_last_name end,
+      child_dob = case when nullif(trim(excluded.child_dob), '') is not null
+        then excluded.child_dob else patients.child_dob end,
+      visit_type = coalesce(nullif(trim(patients.visit_type), ''), nullif(trim(excluded.visit_type), ''), 'new_patient'),
+      preferred_language = coalesce(excluded.preferred_language, patients.preferred_language),
+      sex = coalesce(excluded.sex, patients.sex),
+      race_ethnicity = coalesce(excluded.race_ethnicity, patients.race_ethnicity),
+      updated_at = excluded.updated_at`,
   ).run(
     patientId,
     submission.practice_id,
@@ -269,27 +314,35 @@ export function materializePatientFromSubmission(submissionId: string): { patien
     });
   }
 
-  db.prepare('delete from guardians where patient_id = ?').run(patientId);
-  for (const g of guardianRows) {
-    db.prepare(
-      `insert into guardians (
+  const guardianRowHasData = (g: Record<string, unknown>) =>
+    ['full_name', 'relationship', 'phone', 'email', 'address', 'employer', 'ssn_last4'].some((k) => {
+      const v = g[k];
+      return v != null && String(v).trim() !== '';
+    });
+  const hasGuardianPayload = guardianRows.some(guardianRowHasData);
+  if (hasGuardianPayload) {
+    db.prepare('delete from guardians where patient_id = ?').run(patientId);
+    for (const g of guardianRows) {
+      db.prepare(
+        `insert into guardians (
         id, patient_id, guardian_index, full_name, relationship, phone, email, address, employer,
         ssn_last4, created_at, updated_at
       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      randomUUID(),
-      patientId,
-      g.guardian_index,
-      g.full_name,
-      g.relationship,
-      g.phone,
-      g.email,
-      g.address,
-      g.employer,
-      g.ssn_last4,
-      now,
-      now,
-    );
+      ).run(
+        randomUUID(),
+        patientId,
+        g.guardian_index,
+        g.full_name,
+        g.relationship,
+        g.phone,
+        g.email,
+        g.address,
+        g.employer,
+        g.ssn_last4,
+        now,
+        now,
+      );
+    }
   }
 
   const insuranceRows = [
@@ -297,25 +350,27 @@ export function materializePatientFromSubmission(submissionId: string): { patien
     { policy_order: 2, ...(insurance.secondary ?? {}) },
   ].filter((row) => Object.keys(row).length > 1);
 
-  db.prepare('delete from insurance_policies where patient_id = ?').run(patientId);
-  for (const policy of insuranceRows) {
-    db.prepare(
-      `insert into insurance_policies (
+  if (insuranceRows.length > 0) {
+    db.prepare('delete from insurance_policies where patient_id = ?').run(patientId);
+    for (const policy of insuranceRows) {
+      db.prepare(
+        `insert into insurance_policies (
         id, patient_id, policy_order, company, subscriber_name, subscriber_dob, group_number, member_id,
         created_at, updated_at
       ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      randomUUID(),
-      patientId,
-      policy.policy_order,
-      (policy as any).company ?? null,
-      (policy as any).subscriber_name ?? null,
-      (policy as any).subscriber_dob ?? null,
-      (policy as any).group_number ?? null,
-      (policy as any).member_id ?? null,
-      now,
-      now,
-    );
+      ).run(
+        randomUUID(),
+        patientId,
+        policy.policy_order,
+        (policy as any).company ?? null,
+        (policy as any).subscriber_name ?? null,
+        (policy as any).subscriber_dob ?? null,
+        (policy as any).group_number ?? null,
+        (policy as any).member_id ?? null,
+        now,
+        now,
+      );
+    }
   }
 
   upsertSingle('pharmacies', patientId, {
@@ -351,14 +406,14 @@ export function materializePatientFromSubmission(submissionId: string): { patien
       reaction: item.reaction ?? null,
     });
   }
-  replaceRows('allergies', patientId, allergyRows);
+  if (allergyRows.length > 0) replaceRows('allergies', patientId, allergyRows);
 
   const medicationRows = ((form.medications?.items ?? []) as any[]).map((item) => ({
     medication_name: item.name ?? null,
     dose: item.dose ?? null,
     frequency: item.frequency ?? null,
   }));
-  replaceRows('medications', patientId, medicationRows);
+  if (medicationRows.length > 0) replaceRows('medications', patientId, medicationRows);
 
   upsertSingle('immunizations', patientId, {
     status: immunizations.status ?? null,
@@ -371,7 +426,7 @@ export function materializePatientFromSubmission(submissionId: string): { patien
       notes: null,
     }),
   );
-  replaceRows('family_history', patientId, familyRows);
+  if (familyRows.length > 0) replaceRows('family_history', patientId, familyRows);
 
   upsertSingle('social_history', patientId, {
     household_adults: social.household_adults ?? null,
@@ -513,7 +568,7 @@ export function bulkImportPatientsFromExcelRows(
        and lower(trim(child_last_name)) = lower(trim(?))
        and child_dob = ?
      limit 1`,
-  );
+  ); // logic mirrored in findPatientIdByPracticeNameDob
 
   const insertPatient = db.prepare(
     `insert into patients (
@@ -561,7 +616,12 @@ export function bulkImportPatientsFromExcelRows(
     if (row.patientAcctNo?.trim()) {
       existing = dupByAcct.get(practiceId, row.patientAcctNo.trim()) as { id: string } | undefined;
     } else {
-      existing = dupByNameDob.get(practiceId, row.childFirstName, row.childLastName, row.childDob) as
+      existing = dupByNameDob.get(
+        practiceId,
+        row.childFirstName,
+        row.childLastName,
+        normalizeDobForMatch(row.childDob),
+      ) as
         | { id: string }
         | undefined;
     }
