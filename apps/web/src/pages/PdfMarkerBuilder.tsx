@@ -383,14 +383,19 @@ export function PdfMarkerBuilder() {
 
   // ── Export JSON ──────────────────────────────────────────────────────────
 
-  function handleExport() {
+  async function handleExport() {
     if (!template) return;
+    const res = await fetch(`${API_BASE}/api/staff/pdf-marker/${id}/export`, {
+      headers: authHeader(token),
+    });
+    if (!res.ok) { alert('Export failed: ' + res.status); return; }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = `${API_BASE}/api/staff/pdf-marker/${id}/export`;
+    a.href = url;
     a.download = `${template.template_key}_fields.json`;
-    document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 
   // ── Publish ──────────────────────────────────────────────────────────────
